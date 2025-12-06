@@ -114,4 +114,28 @@ export const checkHealth = async () => {
   }
 };
 
+/**
+ * Phân tích ảnh chụp màn hình để phát hiện lừa đảo (OCR)
+ * @param {Object} params - Parameters
+ * @param {string} params.imageBase64 - Ảnh dạng base64
+ * @param {string} params.conversationId - ID hội thoại (optional)
+ * @param {string} params.language - Ngôn ngữ (vi, en, km)
+ */
+export const analyzeImage = async ({ imageBase64, conversationId, language }) => {
+  try {
+    const response = await api.post('/chatbot/analyze-image', {
+      imageBase64,
+      conversationId,
+      language
+    }, {
+      timeout: 60000 // OCR có thể mất thời gian hơn
+    });
+
+    return response.data.data;
+  } catch (error) {
+    console.error('API analyzeImage error:', error);
+    throw error;
+  }
+};
+
 export default api;
