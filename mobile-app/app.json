@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "Agribank Digital Guard",
+    "slug": "agribank-digital-guard",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/logo-agribank.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/logo-agribank.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FBD6E3"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.agribank.digitalguard"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/logo-agribank.png",
+        "backgroundColor": "#FBD6E3"
+      },
+      "package": "com.agribank.digitalguard",
+      "permissions": [
+        "RECORD_AUDIO",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/logo-agribank.png"
+    },
+    "sdkVersion": "54.0.0"
+  }
+}

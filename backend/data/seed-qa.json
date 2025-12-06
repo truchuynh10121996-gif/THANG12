@@ -1,0 +1,92 @@
+[
+  {
+    "question": "Tôi nhận được tin nhắn yêu cầu cung cấp mã OTP để cập nhật thông tin tài khoản. Có nên cung cấp không?",
+    "answer": "⚠️ CẢNH BÁO LỪA ĐẢO\n\n❌ TUYỆT ĐỐI KHÔNG cung cấp mã OTP cho bất kỳ ai!\n\nĐây là thủ đoạn lừa đảo phổ biến. Agribank KHÔNG BAO GIỜ yêu cầu khách hàng cung cấp mã OTP qua tin nhắn, điện thoại hay email.\n\nHƯỚNG DẪN AN TOÀN:\n1. Xóa tin nhắn ngay lập tức\n2. Không trả lời hoặc nhấn vào bất kỳ link nào\n3. Liên hệ hotline Agribank: 1900 5555 88 để báo cáo\n4. Đến chi nhánh Agribank gần nhất nếu cần hỗ trợ\n\nLƯU Ý: Mã OTP là mật khẩu một lần, CHỈ dùng cho chính bạn xác thực giao dịch.",
+    "language": "vi",
+    "category": "otp",
+    "keywords": ["otp", "mã xác thực", "cập nhật thông tin", "tin nhắn"],
+    "isFraudScenario": true,
+    "priority": 10
+  },
+  {
+    "question": "Có người gọi điện tự xưng là nhân viên Agribank nói tài khoản của tôi bị khóa và yêu cầu cung cấp thông tin để mở khóa.",
+    "answer": "⚠️ CẢNH BÁO LỪA ĐẢO\n\nĐây là thủ đoạn LỪA ĐẢO mạo danh ngân hàng!\n\nDẤU HIỆU NHẬN BIẾT:\n- Gọi điện yêu cầu thông tin cá nhân\n- Đe dọa tài khoản bị khóa\n- Tạo áp lực phải xử lý gấp\n- Yêu cầu cung cấp mật khẩu, OTP\n\nHƯỚNG DẪN AN TOÀN:\n1. ❌ GẬT MÁY NGAY LẬP TỨC\n2. ❌ KHÔNG cung cấp bất kỳ thông tin nào\n3. ✅ Gọi lại hotline chính thức: 1900 5555 88\n4. ✅ Kiểm tra tài khoản qua app Agribank E-Mobile Banking\n5. ✅ Báo cáo cho công an nếu bị chiếm đoạt tài sản\n\nAgribank sẽ KHÔNG BAO GIỜ gọi điện yêu cầu thông tin nhạy cảm!",
+    "language": "vi",
+    "category": "fraud-alert",
+    "keywords": ["gọi điện", "nhân viên", "tài khoản bị khóa", "mạo danh"],
+    "isFraudScenario": true,
+    "priority": 10
+  },
+  {
+    "question": "Tôi nhận được link từ số lạ yêu cầu cập nhật ứng dụng Agribank. Có nên nhấn vào không?",
+    "answer": "⚠️ CẢNH BÁO LỪA ĐẢO\n\n❌ TUYỆT ĐỐI KHÔNG nhấn vào link từ nguồn không rõ ràng!\n\nThủ đoạn này nhằm:\n- Đánh cắp thông tin đăng nhập\n- Cài đặt phần mềm độc hại\n- Chiếm quyền kiểm soát thiết bị\n\nHƯỚNG DẪN AN TOÀN:\n1. ❌ Không nhấn vào link\n2. ❌ Không tải ứng dụng từ nguồn không chính thức\n3. ✅ Chỉ tải app từ:\n   - App Store (iOS)\n   - Google Play Store (Android)\n   - Website chính thức: agribank.com.vn\n4. ✅ Kiểm tra tên nhà phát hành: Vietnam Bank for Agriculture and Rural Development\n5. ✅ Báo cáo tin nhắn lừa đảo cho Agribank\n\nỨng dụng chính thức: Agribank E-Mobile Banking",
+    "language": "vi",
+    "category": "phishing",
+    "keywords": ["link", "cập nhật", "ứng dụng", "app", "tải về"],
+    "isFraudScenario": true,
+    "priority": 9
+  },
+  {
+    "question": "Làm thế nào để bảo vệ tài khoản ngân hàng an toàn?",
+    "answer": "🛡️ HƯỚNG DẪN BẢO MẬT TÀI KHOẢN AGRIBANK\n\nNGUYÊN TẮC VÀNG:\n1. ✅ Giữ bí mật tuyệt đối:\n   - Mật khẩu đăng nhập\n   - Mã PIN thẻ\n   - Mã OTP\n   - Thông tin cá nhân\n\n2. ✅ Sử dụng mật khẩu mạnh:\n   - Tối thiểu 8 ký tự\n   - Kết hợp chữ, số, ký tự đặc biệt\n   - Không dùng thông tin dễ đoán\n   - Thay đổi định kỳ\n\n3. ✅ Cảnh giác với:\n   - Cuộc gọi/tin nhắn lạ\n   - Email không rõ nguồn gốc\n   - Link đáng ngờ\n   - Yêu cầu cung cấp thông tin\n\n4. ✅ Kiểm tra thường xuyên:\n   - Lịch sử giao dịch\n   - Thông báo từ ngân hàng\n   - Số dư tài khoản\n\n5. ✅ Liên hệ ngay khi:\n   - Phát hiện giao dịch lạ\n   - Mất thẻ/điện thoại\n   - Nghi ngờ bị lộ thông tin\n\n📞 Hotline 24/7: 1900 5555 88",
+    "language": "vi",
+    "category": "security",
+    "keywords": ["bảo vệ", "an toàn", "bảo mật", "security"],
+    "isFraudScenario": false,
+    "priority": 5
+  },
+  {
+    "question": "I received a message asking for my OTP code. Should I provide it?",
+    "answer": "⚠️ FRAUD ALERT\n\n❌ NEVER provide your OTP code to anyone!\n\nThis is a common fraud technique. Agribank will NEVER ask customers to provide OTP codes via messages, phone calls, or emails.\n\nSAFETY INSTRUCTIONS:\n1. Delete the message immediately\n2. Do not reply or click any links\n3. Contact Agribank hotline: 1900 5555 88 to report\n4. Visit the nearest Agribank branch if you need assistance\n\nREMEMBER: OTP is a one-time password, ONLY for you to authenticate transactions.",
+    "language": "en",
+    "category": "otp",
+    "keywords": ["otp", "code", "verification", "message"],
+    "isFraudScenario": true,
+    "priority": 10
+  },
+  {
+    "question": "Someone called claiming to be from Agribank saying my account is locked.",
+    "answer": "⚠️ FRAUD ALERT\n\nThis is a SCAM impersonating the bank!\n\nWARNING SIGNS:\n- Calling to request personal information\n- Threatening account suspension\n- Creating pressure for immediate action\n- Asking for passwords or OTP\n\nSAFETY INSTRUCTIONS:\n1. ❌ HANG UP immediately\n2. ❌ DO NOT provide any information\n3. ✅ Call back official hotline: 1900 5555 88\n4. ✅ Check your account via Agribank E-Mobile Banking app\n5. ✅ Report to police if money was stolen\n\nAgribank will NEVER call to request sensitive information!",
+    "language": "en",
+    "category": "fraud-alert",
+    "keywords": ["phone call", "account locked", "impersonation"],
+    "isFraudScenario": true,
+    "priority": 10
+  },
+  {
+    "question": "តើខ្ញុំត្រូវធ្វើយ៉ាងណានៅពេលទទួលបានសារស្នើសុំលេខកូដ OTP?",
+    "answer": "⚠️ ការព្រមានការលួចបន្លំ\n\n❌ មិនត្រូវផ្តល់លេខកូដ OTP ដល់នរណាម្នាក់ឡើយ!\n\nនេះគឺជាបច្ចេកទេសបោកប្រាស់ទូទៅ។ Agribank មិនដែលស្នើសុំអតិថិជនផ្តល់លេខកូដ OTP តាមរយៈសារ ការហៅទូរស័ព្ទ ឬអ៊ីមែលឡើយ។\n\nការណែនាំសុវត្ថិភាព:\n1. លុបសារភ្លាមៗ\n2. កុំឆ្លើយតប ឬចុចលើតំណណាមួយ\n3. ទាក់ទង hotline Agribank: 1900 5555 88 ដើម្បីរាយការណ៍\n4. ទៅសាខា Agribank ជិតបំផុត ប្រសិនបើអ្នកត្រូវការជំនួយ\n\nចំណាំ: OTP គឺជាលេខសម្ងាត់តែមួយដង សម្រាប់តែអ្នកប៉ុណ្ណោះ ដើម្បីបញ្ជាក់ប្រតិបត្តិការ។",
+    "language": "km",
+    "category": "otp",
+    "keywords": ["otp", "កូដ", "សារ"],
+    "isFraudScenario": true,
+    "priority": 10
+  },
+  {
+    "question": "Tôi nhận được email thông báo trúng thưởng từ Agribank và yêu cầu chuyển phí xử lý.",
+    "answer": "⚠️ CẢNH BÁO LỪA ĐẢO\n\n❌ ĐÂY LÀ LỪA ĐẢO 100%!\n\nDẤU HIỆU NHẬN BIẾT:\n- Email thông báo trúng thưởng không rõ ràng\n- Yêu cầu chuyển phí trước khi nhận thưởng\n- Địa chỉ email lạ, không phải @agribank.com.vn\n- Có lỗi chính tả, ngữ pháp\n\nSỰ THẬT:\n- Agribank KHÔNG tổ chức chương trình trúng thưởng ngẫu nhiên\n- KHÔNG BAO GIỜ yêu cầu chuyển tiền để nhận thưởng\n- Mọi chương trình khuyến mại được công bố chính thức trên website và fanpage\n\nHƯỚNG DẪN:\n1. ❌ Không trả lời email\n2. ❌ Không chuyển tiền\n3. ❌ Không cung cấp thông tin\n4. ✅ Xóa email\n5. ✅ Báo cáo cho Agribank\n6. ✅ Kiểm tra thông tin chương trình khuyến mại tại: agribank.com.vn\n\n📞 Hotline: 1900 5555 88",
+    "language": "vi",
+    "category": "fraud-alert",
+    "keywords": ["trúng thưởng", "email", "phí xử lý", "chuyển tiền"],
+    "isFraudScenario": true,
+    "priority": 10
+  },
+  {
+    "question": "Tôi muốn chuyển tiền cho người thân. Cần lưu ý gì để an toàn?",
+    "answer": "✅ HƯỚNG DẪN CHUYỂN TIỀN AN TOÀN\n\nTRƯỚC KHI CHUYỂN TIỀN:\n1. ✓ Xác minh thông tin người nhận:\n   - Số tài khoản chính xác\n   - Tên chủ tài khoản khớp\n   - Ngân hàng đúng\n\n2. ✓ Liên hệ trực tiếp:\n   - Gọi điện xác nhận\n   - Không tin tin nhắn/email yêu cầu chuyển tiền\n   - Cảnh giác với tài khoản lạ\n\nKHI THỰC HIỆN GIAO DỊCH:\n1. ✓ Kiểm tra kỹ:\n   - Số tài khoản\n   - Số tiền\n   - Nội dung chuyển khoản\n\n2. ✓ Sử dụng kênh chính thức:\n   - Agribank E-Mobile Banking\n   - Internet Banking\n   - Quầy giao dịch\n\n3. ✓ Bảo mật:\n   - Không chia sẻ màn hình giao dịch\n   - Không để người lạ xem\n   - Xác nhận OTP cẩn thận\n\nSAU KHI CHUYỂN:\n1. ✓ Lưu biên lai\n2. ✓ Xác nhận người nhận đã nhận tiền\n3. ✓ Kiểm tra lịch sử giao dịch\n\n⚠️ NẾU NGHI NGỜ:\n- Dừng giao dịch\n- Liên hệ hotline: 1900 5555 88\n- Báo cáo nếu phát hiện lừa đảo",
+    "language": "vi",
+    "category": "transfer",
+    "keywords": ["chuyển tiền", "chuyển khoản", "transfer", "an toàn"],
+    "isFraudScenario": false,
+    "priority": 7
+  },
+  {
+    "question": "Tôi bị mất điện thoại có cài app Agribank. Phải làm gì?",
+    "answer": "🚨 HÀNH ĐỘNG KHẨN CẤP KHI MẤT ĐIỆN THOẠI\n\nNGAY LẬP TỨC:\n1. ⚡ Khóa tài khoản ngân hàng:\n   - Gọi hotline: 1900 5555 88\n   - Yêu cầu tạm khóa tài khoản Internet/Mobile Banking\n   - Khóa thẻ ATM/thẻ tín dụng\n\n2. ⚡ Khóa SIM:\n   - Liên hệ nhà mạng\n   - Yêu cầu khóa SIM ngay lập tức\n   - Đăng ký SIM mới giữ nguyên số\n\n3. ⚡ Thay đổi mật khẩu:\n   - Đổi mật khẩu email\n   - Đổi mật khẩu các tài khoản quan trọng\n   - Đổi mật khẩu mạng xã hội\n\nTIẾP THEO:\n4. 📋 Báo cáo:\n   - Trình báo công an\n   - Lấy giấy xác nhận mất điện thoại\n\n5. 🏦 Đến chi nhánh Agribank:\n   - Mang CMND/CCCD\n   - Giấy xác nhận mất điện thoại\n   - Đăng ký lại dịch vụ\n\n6. 🔐 Bảo mật:\n   - Theo dõi giao dịch\n   - Cảnh giác tin nhắn/cuộc gọi lạ\n   - Không cung cấp thông tin qua điện thoại\n\nLƯU Ý:\n- Hành động càng nhanh càng an toàn\n- Giữ bình tĩnh\n- Liên hệ ngân hàng trước tiên\n\n📞 Hotline 24/7: 1900 5555 88",
+    "language": "vi",
+    "category": "security",
+    "keywords": ["mất điện thoại", "lost phone", "khẩn cấp", "emergency"],
+    "isFraudScenario": false,
+    "priority": 8
+  }
+]
