@@ -166,6 +166,22 @@ function ChatPage() {
     return languageMap[lang] || 'vi-VN';
   };
 
+  // Hàm lấy voice phù hợp với ngôn ngữ
+  const getVoiceForLanguage = (langCode) => {
+    const voices = window.speechSynthesis.getVoices();
+
+    // Tìm voice phù hợp với ngôn ngữ (ví dụ: vi-VN hoặc vi)
+    let voice = voices.find(v => v.lang === langCode);
+
+    // Nếu không tìm thấy, thử tìm với mã ngôn ngữ ngắn (vi, en, km)
+    if (!voice) {
+      const shortLang = langCode.split('-')[0];
+      voice = voices.find(v => v.lang.startsWith(shortLang));
+    }
+
+    return voice;
+  };
+
   // Sử dụng Web Speech API (native browser TTS) làm fallback
   const speakWithNativeTTS = (text) => {
     return new Promise((resolve, reject) => {
@@ -177,24 +193,45 @@ function ChatPage() {
       // Dừng bất kỳ speech nào đang phát
       window.speechSynthesis.cancel();
 
+      const langCode = getLanguageCode(language);
       const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = getLanguageCode(language);
+      utterance.lang = langCode;
       utterance.rate = 0.9;
       utterance.pitch = 1.0;
 
-      utterance.onend = () => {
-        setPlayingAudio(null);
-        resolve();
+      // Hàm thực thi speech sau khi có voices
+      const speak = () => {
+        // Tìm và đặt voice phù hợp với ngôn ngữ
+        const voice = getVoiceForLanguage(langCode);
+        if (voice) {
+          utterance.voice = voice;
+        }
+
+        utterance.onend = () => {
+          setPlayingAudio(null);
+          resolve();
+        };
+
+        utterance.onerror = (error) => {
+          setPlayingAudio(null);
+          reject(error);
+        };
+
+        // Lưu utterance để có thể dừng sau
+        setPlayingAudio({ type: 'speech', utterance });
+        window.speechSynthesis.speak(utterance);
       };
 
-      utterance.onerror = (error) => {
-        setPlayingAudio(null);
-        reject(error);
-      };
-
-      // Lưu utterance để có thể dừng sau
-      setPlayingAudio({ type: 'speech', utterance });
-      window.speechSynthesis.speak(utterance);
+      // Voices có thể chưa được load, cần đợi
+      const voices = window.speechSynthesis.getVoices();
+      if (voices.length > 0) {
+        speak();
+      } else {
+        // Đợi voices được load
+        window.speechSynthesis.onvoiceschanged = () => {
+          speak();
+        };
+      }
     });
   };
 
