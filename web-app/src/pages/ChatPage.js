@@ -166,6 +166,26 @@ function ChatPage() {
     return languageMap[lang] || 'vi-VN';
   };
 
+  // Tìm voice phù hợp nhất cho ngôn ngữ
+  const findVoiceForLanguage = (langCode) => {
+    const voices = window.speechSynthesis.getVoices();
+
+    // Thử tìm voice chính xác (vd: vi-VN)
+    let voice = voices.find(v => v.lang === langCode);
+
+    // Nếu không tìm thấy, thử tìm voice có cùng ngôn ngữ gốc (vd: vi)
+    if (!voice) {
+      const baseLang = langCode.split('-')[0];
+      voice = voices.find(v => v.lang.startsWith(baseLang));
+    }
+
+    // Log để debug
+    console.log('Available voices:', voices.map(v => `${v.name} (${v.lang})`));
+    console.log('Selected voice for', langCode, ':', voice?.name || 'default');
+
+    return voice;
+  };
+
   // Sử dụng Web Speech API (native browser TTS) làm fallback
   const speakWithNativeTTS = (text) => {
     return new Promise((resolve, reject) => {
@@ -177,8 +197,15 @@ function ChatPage() {
       // Dừng bất kỳ speech nào đang phát
       window.speechSynthesis.cancel();
 
+      const langCode = getLanguageCode(language);
       const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = getLanguageCode(language);
+
+      // Tìm và set voice phù hợp
+      const selectedVoice = findVoiceForLanguage(langCode);
+      if (selectedVoice) {
+        utterance.voice = selectedVoice;
+      }
+      utterance.lang = langCode;
       utterance.rate = 0.9;
       utterance.pitch = 1.0;
 
@@ -197,6 +224,20 @@ function ChatPage() {
       window.speechSynthesis.speak(utterance);
     });
   };
+
+  // Đảm bảo voices được load (một số trình duyệt load async)
+  useEffect(() => {
+    if (window.speechSynthesis) {
+      // Trigger load voices
+      window.speechSynthesis.getVoices();
+
+      // Lắng nghe khi voices được load
+      window.speechSynthesis.onvoiceschanged = () => {
+        const voices = window.speechSynthesis.getVoices();
+        console.log('Voices loaded:', voices.length);
+      };
+    }
+  }, []);
 
   const handlePlayAudio = async (text, messageId) => {
     try {
