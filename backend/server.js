@@ -13,6 +13,7 @@ const chatbotRoutes = require('./routes/chatbot.routes');
 const qaRoutes = require('./routes/qa.routes');
 const ttsRoutes = require('./routes/tts.routes');
 const sttRoutes = require('./routes/stt.routes');
+const ocrRoutes = require('./routes/ocr.routes');
 
 // Initialize Express app
 const app = express();
@@ -72,6 +73,7 @@ app.use('/api/chatbot', chatbotRoutes);
 app.use('/api/qa', qaRoutes);
 app.use('/api/tts', ttsRoutes);
 app.use('/api/stt', sttRoutes);
+app.use('/api/ocr', ocrRoutes);
 
 // Health Check Endpoint
 app.get('/api/health', (req, res) => {
@@ -94,7 +96,8 @@ app.get('/', (req, res) => {
       chatbot: '/api/chatbot',
       qa: '/api/qa',
       tts: '/api/tts',
-      stt: '/api/stt'
+      stt: '/api/stt',
+      ocr: '/api/ocr'
     }
   });
 });

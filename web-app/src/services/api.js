@@ -81,4 +81,58 @@ export const checkHealth = async () => {
   }
 };
 
+/**
+ * Phân tích ảnh và phát hiện lừa đảo (OCR)
+ * @param {File} imageFile - File ảnh
+ * @param {string} language - Ngôn ngữ (vi, en, km)
+ * @param {string} conversationId - ID hội thoại (optional)
+ */
+export const analyzeImageForFraud = async ({ imageFile, language, conversationId }) => {
+  try {
+    const formData = new FormData();
+    formData.append('image', imageFile);
+    formData.append('language', language || 'vi');
+    if (conversationId) {
+      formData.append('conversationId', conversationId);
+    }
+
+    const response = await api.post('/ocr/analyze-chat', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      },
+      timeout: 60000 // 60 seconds timeout for OCR processing
+    });
+
+    return response.data.data;
+  } catch (error) {
+    console.error('API analyzeImageForFraud error:', error);
+    throw error;
+  }
+};
+
+/**
+ * Trích xuất văn bản từ ảnh (OCR only)
+ * @param {File} imageFile - File ảnh
+ * @param {string} language - Ngôn ngữ (vi, en, km)
+ */
+export const extractTextFromImage = async ({ imageFile, language }) => {
+  try {
+    const formData = new FormData();
+    formData.append('image', imageFile);
+    formData.append('language', language || 'vi');
+
+    const response = await api.post('/ocr/extract', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      },
+      timeout: 60000
+    });
+
+    return response.data.data;
+  } catch (error) {
+    console.error('API extractTextFromImage error:', error);
+    throw error;
+  }
+};
+
 export default api;

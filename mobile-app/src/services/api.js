@@ -114,4 +114,98 @@ export const checkHealth = async () => {
   }
 };
 
+/**
+ * Phân tích ảnh và phát hiện lừa đảo (OCR)
+ * @param {Object} params - Parameters
+ * @param {string} params.imageUri - URI của ảnh
+ * @param {string} params.language - Ngôn ngữ (vi, en, km)
+ * @param {string} params.conversationId - ID hội thoại (optional)
+ */
+export const analyzeImageForFraud = async ({ imageUri, language, conversationId }) => {
+  try {
+    const formData = new FormData();
+
+    // Lấy tên file từ URI
+    const uriParts = imageUri.split('/');
+    const fileName = uriParts[uriParts.length - 1];
+
+    // Xác định MIME type
+    const fileExtension = fileName.split('.').pop().toLowerCase();
+    const mimeTypes = {
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      png: 'image/png',
+      gif: 'image/gif',
+      webp: 'image/webp',
+      bmp: 'image/bmp'
+    };
+    const mimeType = mimeTypes[fileExtension] || 'image/jpeg';
+
+    formData.append('image', {
+      uri: imageUri,
+      name: fileName,
+      type: mimeType
+    });
+    formData.append('language', language || 'vi');
+    if (conversationId) {
+      formData.append('conversationId', conversationId);
+    }
+
+    const response = await api.post('/ocr/analyze-chat', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      },
+      timeout: 60000 // 60 seconds timeout for OCR processing
+    });
+
+    return response.data.data;
+  } catch (error) {
+    console.error('API analyzeImageForFraud error:', error);
+    throw error;
+  }
+};
+
+/**
+ * Trích xuất văn bản từ ảnh (OCR only)
+ * @param {Object} params - Parameters
+ * @param {string} params.imageUri - URI của ảnh
+ * @param {string} params.language - Ngôn ngữ (vi, en, km)
+ */
+export const extractTextFromImage = async ({ imageUri, language }) => {
+  try {
+    const formData = new FormData();
+
+    const uriParts = imageUri.split('/');
+    const fileName = uriParts[uriParts.length - 1];
+    const fileExtension = fileName.split('.').pop().toLowerCase();
+    const mimeTypes = {
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      png: 'image/png',
+      gif: 'image/gif',
+      webp: 'image/webp'
+    };
+    const mimeType = mimeTypes[fileExtension] || 'image/jpeg';
+
+    formData.append('image', {
+      uri: imageUri,
+      name: fileName,
+      type: mimeType
+    });
+    formData.append('language', language || 'vi');
+
+    const response = await api.post('/ocr/extract', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      },
+      timeout: 60000
+    });
+
+    return response.data.data;
+  } catch (error) {
+    console.error('API extractTextFromImage error:', error);
+    throw error;
+  }
+};
+
 export default api;

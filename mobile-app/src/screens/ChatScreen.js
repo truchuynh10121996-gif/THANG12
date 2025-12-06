@@ -9,13 +9,16 @@ import {
   Platform,
   ScrollView,
   ActivityIndicator,
-  Alert
+  Alert,
+  Image,
+  Modal
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import ChatBubble from '../components/ChatBubble';
 import VoiceRecorder from '../components/VoiceRecorder';
-import { sendMessage, synthesizeSpeech } from '../services/api';
+import { sendMessage, synthesizeSpeech, analyzeImageForFraud } from '../services/api';
 
 export default function ChatScreen({ route, navigation }) {
   const { language = 'vi' } = route.params || {};
@@ -25,6 +28,8 @@ export default function ChatScreen({ route, navigation }) {
   const [isLoading, setIsLoading] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [conversationId, setConversationId] = useState(null);
+  const [selectedImage, setSelectedImage] = useState(null);
+  const [showImageOptions, setShowImageOptions] = useState(false);
 
   const scrollViewRef = useRef();
 
@@ -109,6 +114,148 @@ export default function ChatScreen({ route, navigation }) {
     }
   };
 
+  // Xin quyền truy cập camera và thư viện ảnh
+  const requestPermissions = async () => {
+    const { status: cameraStatus } = await ImagePicker.requestCameraPermissionsAsync();
+    const { status: libraryStatus } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (cameraStatus !== 'granted' || libraryStatus !== 'granted') {
+      Alert.alert(
+        language === 'vi' ? 'Cần quyền truy cập' : 'Permission Required',
+        language === 'vi'
+          ? 'Vui lòng cấp quyền truy cập camera và thư viện ảnh để sử dụng tính năng này.'
+          : 'Please grant camera and photo library access to use this feature.'
+      );
+      return false;
+    }
+    return true;
+  };
+
+  // Chụp ảnh từ camera
+  const takePhoto = async () => {
+    setShowImageOptions(false);
+
+    const hasPermission = await requestPermissions();
+    if (!hasPermission) return;
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.8
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      setSelectedImage(result.assets[0].uri);
+    }
+  };
+
+  // Chọn ảnh từ thư viện
+  const pickImage = async () => {
+    setShowImageOptions(false);
+
+    const hasPermission = await requestPermissions();
+    if (!hasPermission) return;
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.8
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      setSelectedImage(result.assets[0].uri);
+    }
+  };
+
+  // Xóa ảnh đã chọn
+  const removeSelectedImage = () => {
+    setSelectedImage(null);
+  };
+
+  // Gửi ảnh để phân tích
+  const handleSendImage = async () => {
+    if (!selectedImage || isLoading) return;
+
+    const imageUri = selectedImage;
+
+    // Thêm tin nhắn người dùng với ảnh
+    const userMessage = {
+      id: Date.now().toString(),
+      text: language === 'vi' ? 'Đã tải ảnh lên để phân tích' : 'Image uploaded for analysis',
+      sender: 'user',
+      timestamp: new Date(),
+      imageUrl: imageUri
+    };
+
+    setMessages(prev => [...prev, userMessage]);
+    setSelectedImage(null);
+    setIsLoading(true);
+
+    try {
+      const response = await analyzeImageForFraud({
+        imageUri,
+        language,
+        conversationId
+      });
+
+      if (!conversationId) {
+        setConversationId(response.conversationId);
+      }
+
+      // Tạo tin nhắn bot với kết quả phân tích
+      let botText = response.response;
+
+      // Thêm thông tin văn bản trích xuất nếu có
+      if (response.extractedText && response.extractedText.length > 0) {
+        const extractedLabel = language === 'vi' ? 'Văn bản trích xuất từ ảnh' : 'Text extracted from image';
+        const shortText = response.extractedText.length > 150
+          ? response.extractedText.substring(0, 150) + '...'
+          : response.extractedText;
+        botText = `📝 ${extractedLabel}:\n"${shortText}"\n\n---\n\n${botText}`;
+      }
+
+      const botMessage = {
+        id: (Date.now() + 1).toString(),
+        text: botText,
+        sender: 'bot',
+        timestamp: new Date(),
+        isFraudAlert: response.isFraudAlert,
+        analysis: response.analysis
+      };
+
+      setMessages(prev => [...prev, botMessage]);
+
+      if (response.isFraudAlert) {
+        Alert.alert(
+          '⚠️ ' + (language === 'vi' ? 'Cảnh báo lừa đảo!' : 'Fraud Alert!'),
+          language === 'vi'
+            ? 'Phát hiện dấu hiệu lừa đảo trong ảnh. Vui lòng xem chi tiết phản hồi.'
+            : 'Fraud indicators detected in the image. Please review the response.'
+        );
+      }
+
+    } catch (error) {
+      console.error('Send image error:', error);
+      Alert.alert(
+        language === 'vi' ? 'Lỗi' : 'Error',
+        language === 'vi' ? 'Không thể phân tích ảnh. Vui lòng thử lại.' : 'Could not analyze image. Please try again.'
+      );
+
+      const errorMessage = {
+        id: (Date.now() + 1).toString(),
+        text: language === 'vi'
+          ? 'Xin lỗi, không thể phân tích ảnh. Vui lòng thử lại.'
+          : 'Sorry, could not analyze the image. Please try again.',
+        sender: 'bot',
+        timestamp: new Date()
+      };
+
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const scrollToBottom = () => {
     setTimeout(() => {
       scrollViewRef.current?.scrollToEnd({ animated: true });
@@ -173,9 +320,37 @@ export default function ChatScreen({ route, navigation }) {
           )}
         </ScrollView>
 
+        {/* Image Preview */}
+        {selectedImage && (
+          <View style={styles.imagePreviewContainer}>
+            <Image source={{ uri: selectedImage }} style={styles.imagePreview} />
+            <View style={styles.imagePreviewInfo}>
+              <Text style={styles.imagePreviewText}>
+                {language === 'vi' ? 'Ảnh đã chọn' : 'Image selected'}
+              </Text>
+              <TouchableOpacity onPress={removeSelectedImage} style={styles.removeImageBtn}>
+                <Ionicons name="close-circle" size={24} color="#FF6B99" />
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
         {/* Input */}
         <View style={styles.inputContainer}>
           <View style={styles.inputWrapper}>
+            {/* Camera Button */}
+            <TouchableOpacity
+              style={styles.cameraButton}
+              onPress={() => setShowImageOptions(true)}
+              disabled={isLoading}
+            >
+              <Ionicons
+                name="camera"
+                size={24}
+                color={isLoading ? '#CCC' : '#FF8DAD'}
+              />
+            </TouchableOpacity>
+
             <TextInput
               style={styles.input}
               placeholder={
@@ -187,6 +362,7 @@ export default function ChatScreen({ route, navigation }) {
               onChangeText={setInputText}
               multiline
               maxLength={500}
+              editable={!selectedImage}
             />
 
             <VoiceRecorder
@@ -197,19 +373,62 @@ export default function ChatScreen({ route, navigation }) {
             <TouchableOpacity
               style={[
                 styles.sendButton,
-                !inputText.trim() && styles.sendButtonDisabled
+                (!inputText.trim() && !selectedImage) && styles.sendButtonDisabled
               ]}
-              onPress={handleSendMessage}
-              disabled={!inputText.trim() || isLoading}
+              onPress={selectedImage ? handleSendImage : handleSendMessage}
+              disabled={(!inputText.trim() && !selectedImage) || isLoading}
             >
               <Ionicons
-                name="send"
+                name={selectedImage ? 'image' : 'send'}
                 size={24}
-                color={inputText.trim() ? '#FF8DAD' : '#CCC'}
+                color={(inputText.trim() || selectedImage) ? '#FF8DAD' : '#CCC'}
               />
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* Image Options Modal */}
+        <Modal
+          visible={showImageOptions}
+          transparent={true}
+          animationType="slide"
+          onRequestClose={() => setShowImageOptions(false)}
+        >
+          <TouchableOpacity
+            style={styles.modalOverlay}
+            activeOpacity={1}
+            onPress={() => setShowImageOptions(false)}
+          >
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>
+                {language === 'vi' ? 'Chọn ảnh để phân tích lừa đảo' : 'Select image for fraud analysis'}
+              </Text>
+
+              <TouchableOpacity style={styles.modalOption} onPress={takePhoto}>
+                <Ionicons name="camera" size={28} color="#FF8DAD" />
+                <Text style={styles.modalOptionText}>
+                  {language === 'vi' ? 'Chụp ảnh' : 'Take Photo'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.modalOption} onPress={pickImage}>
+                <Ionicons name="images" size={28} color="#FF8DAD" />
+                <Text style={styles.modalOptionText}>
+                  {language === 'vi' ? 'Chọn từ thư viện' : 'Choose from Library'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.modalCancel}
+                onPress={() => setShowImageOptions(false)}
+              >
+                <Text style={styles.modalCancelText}>
+                  {language === 'vi' ? 'Hủy' : 'Cancel'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </Modal>
       </KeyboardAvoidingView>
     </LinearGradient>
   );
@@ -303,5 +522,84 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: {
     opacity: 0.5
+  },
+  cameraButton: {
+    marginRight: 10,
+    padding: 5
+  },
+  imagePreviewContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    marginHorizontal: 15,
+    marginBottom: 5,
+    borderRadius: 15,
+    padding: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 3
+  },
+  imagePreview: {
+    width: 60,
+    height: 60,
+    borderRadius: 10
+  },
+  imagePreviewInfo: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginLeft: 15
+  },
+  imagePreviewText: {
+    color: '#666',
+    fontSize: 14
+  },
+  removeImageBtn: {
+    padding: 5
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end'
+  },
+  modalContent: {
+    backgroundColor: '#FFF',
+    borderTopLeftRadius: 25,
+    borderTopRightRadius: 25,
+    padding: 25,
+    paddingBottom: 40
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    textAlign: 'center',
+    marginBottom: 25
+  },
+  modalOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 15,
+    paddingHorizontal: 20,
+    backgroundColor: '#FFF5F8',
+    borderRadius: 15,
+    marginBottom: 12
+  },
+  modalOptionText: {
+    fontSize: 16,
+    color: '#333',
+    marginLeft: 15
+  },
+  modalCancel: {
+    alignItems: 'center',
+    paddingVertical: 15,
+    marginTop: 10
+  },
+  modalCancelText: {
+    fontSize: 16,
+    color: '#999'
   }
 });

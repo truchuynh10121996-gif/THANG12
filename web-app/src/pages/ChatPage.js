@@ -20,8 +20,11 @@ import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import WarningIcon from '@mui/icons-material/Warning';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import PersonIcon from '@mui/icons-material/Person';
+import ImageIcon from '@mui/icons-material/Image';
+import PhotoCameraIcon from '@mui/icons-material/PhotoCamera';
+import CloseIcon from '@mui/icons-material/Close';
 import toast, { Toaster } from 'react-hot-toast';
-import { sendMessage, synthesizeSpeech } from '../services/api';
+import { sendMessage, synthesizeSpeech, analyzeImageForFraud } from '../services/api';
 
 const translations = {
   vi: {
@@ -30,7 +33,14 @@ const translations = {
     placeholder: 'Nhập câu hỏi của bạn...',
     fraudAlert: 'Cảnh báo lừa đảo',
     errorConnection: 'Gặp sự cố kết nối. Vui lòng thử lại.',
-    welcome: 'Xin chào! Tôi là trợ lý AI của Agribank. Tôi có thể giúp gì cho bạn?'
+    welcome: 'Xin chào! Tôi là trợ lý AI của Agribank. Tôi có thể giúp gì cho bạn?',
+    uploadImage: 'Tải ảnh lên',
+    analyzing: 'Đang phân tích ảnh...',
+    extractedText: 'Văn bản trích xuất từ ảnh',
+    imageUploaded: 'Đã tải ảnh lên để phân tích',
+    noTextExtracted: 'Không thể trích xuất văn bản từ ảnh. Vui lòng thử ảnh khác.',
+    imageTooLarge: 'Ảnh quá lớn. Vui lòng chọn ảnh nhỏ hơn 10MB.',
+    invalidImageType: 'Định dạng ảnh không hợp lệ. Vui lòng chọn ảnh JPG, PNG hoặc GIF.'
   },
   en: {
     title: 'Agribank Digital Guard',
@@ -38,7 +48,14 @@ const translations = {
     placeholder: 'Type your question...',
     fraudAlert: 'Fraud Alert',
     errorConnection: 'Connection error. Please try again.',
-    welcome: 'Hello! I am Agribank AI assistant. How can I help you?'
+    welcome: 'Hello! I am Agribank AI assistant. How can I help you?',
+    uploadImage: 'Upload Image',
+    analyzing: 'Analyzing image...',
+    extractedText: 'Text extracted from image',
+    imageUploaded: 'Image uploaded for analysis',
+    noTextExtracted: 'Could not extract text from image. Please try another image.',
+    imageTooLarge: 'Image too large. Please select an image smaller than 10MB.',
+    invalidImageType: 'Invalid image format. Please select JPG, PNG or GIF.'
   },
   km: {
     title: 'Agribank Digital Guard',
@@ -46,7 +63,14 @@ const translations = {
     placeholder: 'វាយសំណួររបស់អ្នក...',
     fraudAlert: 'ការជូនដំណឹងក្លែងបន្លំ',
     errorConnection: 'បញ្ហាការតភ្ជាប់។ សូមព្យាយាមម្តងទៀត។',
-    welcome: 'សួស្តី! ខ្ញុំជាជំនួយការ AI របស់ Agribank ។ តើខ្ញុំអាចជួយអ្នកបានដូចម្តេច?'
+    welcome: 'សួស្តី! ខ្ញុំជាជំនួយការ AI របស់ Agribank ។ តើខ្ញុំអាចជួយអ្នកបានដូចម្តេច?',
+    uploadImage: 'បង្ហោះរូបភាព',
+    analyzing: 'កំពុងវិភាគរូបភាព...',
+    extractedText: 'អត្ថបទដកស្រង់ពីរូបភាព',
+    imageUploaded: 'រូបភាពត្រូវបានបង្ហោះសម្រាប់ការវិភាគ',
+    noTextExtracted: 'មិនអាចដកស្រង់អត្ថបទពីរូបភាពបានទេ។ សូមសាកល្បងរូបភាពផ្សេង។',
+    imageTooLarge: 'រូបភាពធំពេក។ សូមជ្រើសរើសរូបភាពតូចជាង 10MB។',
+    invalidImageType: 'ទម្រង់រូបភាពមិនត្រឹមត្រូវ។ សូមជ្រើសរើស JPG, PNG ឬ GIF។'
   }
 };
 
@@ -58,7 +82,10 @@ function ChatPage() {
   const [loading, setLoading] = useState(false);
   const [conversationId, setConversationId] = useState(null);
   const messagesEndRef = useRef(null);
+  const fileInputRef = useRef(null);
   const [playingAudio, setPlayingAudio] = useState(null);
+  const [selectedImage, setSelectedImage] = useState(null);
+  const [imagePreview, setImagePreview] = useState(null);
 
   const t = translations[language] || translations.vi;
 
@@ -153,6 +180,120 @@ function ChatPage() {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSendMessage();
+    }
+  };
+
+  // Xử lý chọn ảnh
+  const handleImageSelect = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    // Validate file type
+    const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+    if (!validTypes.includes(file.type)) {
+      toast.error(t.invalidImageType);
+      return;
+    }
+
+    // Validate file size (10MB max)
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error(t.imageTooLarge);
+      return;
+    }
+
+    setSelectedImage(file);
+
+    // Create preview URL
+    const previewUrl = URL.createObjectURL(file);
+    setImagePreview(previewUrl);
+  };
+
+  // Xóa ảnh đã chọn
+  const handleRemoveImage = () => {
+    setSelectedImage(null);
+    if (imagePreview) {
+      URL.revokeObjectURL(imagePreview);
+      setImagePreview(null);
+    }
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  // Gửi ảnh để phân tích
+  const handleSendImage = async () => {
+    if (!selectedImage || loading) return;
+
+    // Thêm tin nhắn người dùng với ảnh
+    const userMessage = {
+      id: Date.now(),
+      text: t.imageUploaded,
+      isBot: false,
+      timestamp: new Date(),
+      imageUrl: imagePreview
+    };
+
+    setMessages((prev) => [...prev, userMessage]);
+    setLoading(true);
+
+    // Giữ lại preview URL trước khi xóa
+    const currentPreview = imagePreview;
+
+    try {
+      const response = await analyzeImageForFraud({
+        imageFile: selectedImage,
+        language,
+        conversationId
+      });
+
+      if (!conversationId) {
+        setConversationId(response.conversationId);
+      }
+
+      // Tạo tin nhắn bot với kết quả phân tích
+      let botText = response.response;
+
+      // Thêm thông tin văn bản trích xuất nếu có
+      if (response.extractedText && response.extractedText.length > 0) {
+        botText = `📝 **${t.extractedText}:**\n"${response.extractedText.substring(0, 200)}${response.extractedText.length > 200 ? '...' : ''}"\n\n---\n\n${botText}`;
+      }
+
+      const botMessage = {
+        id: Date.now() + 1,
+        text: botText,
+        isBot: true,
+        timestamp: new Date(),
+        isFraudAlert: response.isFraudAlert,
+        analysis: response.analysis
+      };
+
+      setMessages((prev) => [...prev, botMessage]);
+
+      if (response.isFraudAlert) {
+        toast.error(t.fraudAlert, {
+          icon: '⚠️',
+          duration: 4000
+        });
+      }
+
+      // Clear image after successful upload
+      handleRemoveImage();
+
+    } catch (error) {
+      console.error('Error analyzing image:', error);
+      toast.error(t.errorConnection);
+
+      const errorMessage = {
+        id: Date.now() + 1,
+        text: t.errorConnection,
+        isBot: true,
+        timestamp: new Date(),
+        isError: true
+      };
+
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -398,6 +539,20 @@ function ChatPage() {
                         sx={{ mb: 1 }}
                       />
                     )}
+                    {message.imageUrl && (
+                      <Box sx={{ mb: 1 }}>
+                        <img
+                          src={message.imageUrl}
+                          alt="Uploaded"
+                          style={{
+                            maxWidth: '100%',
+                            maxHeight: '200px',
+                            borderRadius: '8px',
+                            objectFit: 'contain'
+                          }}
+                        />
+                      </Box>
+                    )}
                     <Typography
                       variant="body1"
                       sx={{
@@ -471,7 +626,80 @@ function ChatPage() {
         }}
       >
         <Container maxWidth="md">
+          {/* Hidden file input */}
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleImageSelect}
+            accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
+            style={{ display: 'none' }}
+          />
+
+          {/* Image Preview */}
+          {imagePreview && (
+            <Box
+              sx={{
+                mb: 2,
+                p: 1,
+                bgcolor: '#FFF5F8',
+                borderRadius: 2,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 2
+              }}
+            >
+              <img
+                src={imagePreview}
+                alt="Preview"
+                style={{
+                  width: 80,
+                  height: 80,
+                  objectFit: 'cover',
+                  borderRadius: 8
+                }}
+              />
+              <Box sx={{ flexGrow: 1 }}>
+                <Typography variant="body2" color="textSecondary">
+                  {selectedImage?.name}
+                </Typography>
+                <Typography variant="caption" color="textSecondary">
+                  {(selectedImage?.size / 1024).toFixed(1)} KB
+                </Typography>
+              </Box>
+              <IconButton
+                size="small"
+                onClick={handleRemoveImage}
+                sx={{ color: '#FF6B99' }}
+              >
+                <CloseIcon />
+              </IconButton>
+            </Box>
+          )}
+
           <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+            {/* Upload Image Button */}
+            <Tooltip title={t.uploadImage}>
+              <IconButton
+                onClick={() => fileInputRef.current?.click()}
+                disabled={loading}
+                sx={{
+                  bgcolor: '#FFF5F8',
+                  color: '#FF8DAD',
+                  width: 56,
+                  height: 56,
+                  '&:hover': {
+                    bgcolor: '#FFE6F0'
+                  },
+                  '&.Mui-disabled': {
+                    bgcolor: '#FFF5F8',
+                    color: '#FFD6E6'
+                  }
+                }}
+              >
+                <PhotoCameraIcon />
+              </IconButton>
+            </Tooltip>
+
             <TextField
               fullWidth
               multiline
@@ -480,7 +708,7 @@ function ChatPage() {
               onChange={(e) => setInputText(e.target.value)}
               onKeyPress={handleKeyPress}
               placeholder={t.placeholder}
-              disabled={loading}
+              disabled={loading || selectedImage}
               variant="outlined"
               sx={{
                 '& .MuiOutlinedInput-root': {
@@ -492,10 +720,12 @@ function ChatPage() {
                 }
               }}
             />
+
+            {/* Send Button - changes based on whether there's an image or text */}
             <IconButton
               color="primary"
-              onClick={handleSendMessage}
-              disabled={!inputText.trim() || loading}
+              onClick={selectedImage ? handleSendImage : handleSendMessage}
+              disabled={(!inputText.trim() && !selectedImage) || loading}
               sx={{
                 bgcolor: '#FF8DAD',
                 color: 'white',
@@ -510,7 +740,7 @@ function ChatPage() {
                 }
               }}
             >
-              <SendIcon />
+              {selectedImage ? <ImageIcon /> : <SendIcon />}
             </IconButton>
           </Box>
         </Container>
