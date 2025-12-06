@@ -4,11 +4,13 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  ActivityIndicator
+  ActivityIndicator,
+  Platform
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Audio } from 'expo-av';
+import * as Speech from 'expo-speech';
 import { synthesizeSpeech } from '../services/api';
 
 export default function ChatBubble({ message, language }) {
@@ -19,43 +21,113 @@ export default function ChatBubble({ message, language }) {
   const isBot = message.sender === 'bot';
   const isFraud = message.isFraudAlert;
 
+  // Map ngôn ngữ sang mã BCP-47 cho Speech
+  const getLanguageCode = (lang) => {
+    const languageMap = {
+      vi: 'vi-VN',
+      en: 'en-US',
+      km: 'km-KH'
+    };
+    return languageMap[lang] || 'vi-VN';
+  };
+
+  // Sử dụng expo-speech (native TTS) làm fallback
+  const speakWithNativeTTS = async (text) => {
+    const langCode = getLanguageCode(language);
+
+    return new Promise((resolve, reject) => {
+      Speech.speak(text, {
+        language: langCode,
+        pitch: 1.0,
+        rate: 0.9,
+        onStart: () => {
+          setIsPlayingAudio(true);
+        },
+        onDone: () => {
+          setIsPlayingAudio(false);
+          resolve();
+        },
+        onStopped: () => {
+          setIsPlayingAudio(false);
+          resolve();
+        },
+        onError: (error) => {
+          setIsPlayingAudio(false);
+          reject(error);
+        }
+      });
+    });
+  };
+
   const handlePlayAudio = async () => {
     try {
-      if (isPlayingAudio && sound) {
-        // Stop audio
-        await sound.stopAsync();
-        await sound.unloadAsync();
-        setSound(null);
+      // Nếu đang phát, dừng lại
+      if (isPlayingAudio) {
+        if (sound) {
+          await sound.stopAsync();
+          await sound.unloadAsync();
+          setSound(null);
+        }
+        // Dừng expo-speech nếu đang phát
+        Speech.stop();
         setIsPlayingAudio(false);
         return;
       }
 
       setIsLoadingAudio(true);
 
-      // Get audio from API
-      const audioData = await synthesizeSpeech({
-        text: message.text,
-        language,
-        gender: 'FEMALE'
-      });
+      // Thử lấy audio từ API backend trước
+      try {
+        const audioData = await synthesizeSpeech({
+          text: message.text,
+          language,
+          gender: 'FEMALE'
+        });
 
-      // Convert base64 to audio
-      const { sound: audioSound } = await Audio.Sound.createAsync(
-        { uri: `data:audio/mp3;base64,${audioData.audioContent}` },
-        { shouldPlay: true }
-      );
+        // Kiểm tra xem response có phải là audio hợp lệ không
+        if (audioData && audioData.audioContent) {
+          // Thử decode base64 để kiểm tra có phải audio hay không
+          // Nếu response là JSON error thì base64 sẽ chứa JSON, không phải audio MP3
+          const base64Str = audioData.audioContent;
 
-      setSound(audioSound);
-      setIsPlayingAudio(true);
+          // Kiểm tra header của MP3 (ID3 tag hoặc MPEG sync word)
+          // MP3 files bắt đầu với "ID3" hoặc 0xFF 0xFB/0xFA/0xF3/0xF2
+          const isValidMP3 = base64Str.startsWith('SUQz') || // "ID3" in base64
+                            base64Str.startsWith('//') ||    // 0xFF in base64
+                            base64Str.startsWith('/+');      // 0xFF variants
 
-      // Handle playback status
-      audioSound.setOnPlaybackStatusUpdate((status) => {
-        if (status.didJustFinish) {
-          setIsPlayingAudio(false);
-          audioSound.unloadAsync();
-          setSound(null);
+          if (isValidMP3) {
+            // Audio hợp lệ từ backend
+            const { sound: audioSound } = await Audio.Sound.createAsync(
+              { uri: `data:audio/mp3;base64,${base64Str}` },
+              { shouldPlay: true }
+            );
+
+            setSound(audioSound);
+            setIsPlayingAudio(true);
+
+            audioSound.setOnPlaybackStatusUpdate((status) => {
+              if (status.didJustFinish) {
+                setIsPlayingAudio(false);
+                audioSound.unloadAsync();
+                setSound(null);
+              }
+            });
+
+            setIsLoadingAudio(false);
+            return;
+          }
         }
-      });
+
+        // Nếu không hợp lệ, throw error để fallback
+        throw new Error('Invalid audio response from backend');
+
+      } catch (backendError) {
+        console.log('Backend TTS failed, using native TTS fallback:', backendError.message);
+      }
+
+      // Fallback: Sử dụng expo-speech (native TTS)
+      await speakWithNativeTTS(message.text);
 
     } catch (error) {
       console.error('Play audio error:', error);

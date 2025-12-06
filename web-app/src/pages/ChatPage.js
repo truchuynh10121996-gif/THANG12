@@ -156,28 +156,107 @@ function ChatPage() {
     }
   };
 
+  // Map ngôn ngữ sang mã BCP-47 cho Web Speech API
+  const getLanguageCode = (lang) => {
+    const languageMap = {
+      vi: 'vi-VN',
+      en: 'en-US',
+      km: 'km-KH'
+    };
+    return languageMap[lang] || 'vi-VN';
+  };
+
+  // Sử dụng Web Speech API (native browser TTS) làm fallback
+  const speakWithNativeTTS = (text) => {
+    return new Promise((resolve, reject) => {
+      if (!window.speechSynthesis) {
+        reject(new Error('Web Speech API not supported'));
+        return;
+      }
+
+      // Dừng bất kỳ speech nào đang phát
+      window.speechSynthesis.cancel();
+
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = getLanguageCode(language);
+      utterance.rate = 0.9;
+      utterance.pitch = 1.0;
+
+      utterance.onend = () => {
+        setPlayingAudio(null);
+        resolve();
+      };
+
+      utterance.onerror = (error) => {
+        setPlayingAudio(null);
+        reject(error);
+      };
+
+      // Lưu utterance để có thể dừng sau
+      setPlayingAudio({ type: 'speech', utterance });
+      window.speechSynthesis.speak(utterance);
+    });
+  };
+
   const handlePlayAudio = async (text, messageId) => {
     try {
+      // Nếu đang phát, dừng lại
       if (playingAudio) {
-        playingAudio.pause();
+        if (playingAudio.type === 'speech') {
+          window.speechSynthesis.cancel();
+        } else {
+          playingAudio.pause();
+        }
         setPlayingAudio(null);
+        return;
       }
 
-      const response = await synthesizeSpeech({
-        text,
-        language,
-        gender: 'FEMALE'
-      });
+      // Thử lấy audio từ API backend trước
+      try {
+        const response = await synthesizeSpeech({
+          text,
+          language,
+          gender: 'FEMALE'
+        });
 
-      if (response.audioContent) {
-        const audio = new Audio(`data:audio/mp3;base64,${response.audioContent}`);
-        audio.play();
-        setPlayingAudio(audio);
+        if (response && response.audioContent) {
+          const base64Str = response.audioContent;
 
-        audio.onended = () => {
-          setPlayingAudio(null);
-        };
+          // Kiểm tra header của MP3 (ID3 tag hoặc MPEG sync word)
+          // MP3 files bắt đầu với "ID3" hoặc 0xFF 0xFB/0xFA/0xF3/0xF2
+          const isValidMP3 = base64Str.startsWith('SUQz') || // "ID3" in base64
+                            base64Str.startsWith('//') ||    // 0xFF in base64
+                            base64Str.startsWith('/+');      // 0xFF variants
+
+          if (isValidMP3) {
+            const audio = new Audio(`data:audio/mp3;base64,${base64Str}`);
+            audio.play();
+            setPlayingAudio(audio);
+
+            audio.onended = () => {
+              setPlayingAudio(null);
+            };
+
+            audio.onerror = () => {
+              // Nếu audio fail, thử fallback
+              console.log('Audio playback failed, using native TTS');
+              speakWithNativeTTS(text);
+            };
+
+            return;
+          }
+        }
+
+        // Nếu không hợp lệ, throw error để fallback
+        throw new Error('Invalid audio response from backend');
+
+      } catch (backendError) {
+        console.log('Backend TTS failed, using native TTS fallback:', backendError.message);
       }
+
+      // Fallback: Sử dụng Web Speech API
+      await speakWithNativeTTS(text);
+
     } catch (error) {
       console.error('Error playing audio:', error);
       toast.error('Không thể phát âm thanh');
