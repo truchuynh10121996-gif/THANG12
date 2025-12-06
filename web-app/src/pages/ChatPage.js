@@ -59,8 +59,34 @@ function ChatPage() {
   const [conversationId, setConversationId] = useState(null);
   const messagesEndRef = useRef(null);
   const [playingAudio, setPlayingAudio] = useState(null);
+  const [availableVoices, setAvailableVoices] = useState([]);
 
   const t = translations[language] || translations.vi;
+
+  // Load voices khi component mount
+  useEffect(() => {
+    const loadVoices = () => {
+      const voices = window.speechSynthesis?.getVoices() || [];
+      if (voices.length > 0) {
+        setAvailableVoices(voices);
+        console.log('Available voices:', voices.map(v => `${v.name} (${v.lang})`));
+      }
+    };
+
+    // Load ngay lập tức
+    loadVoices();
+
+    // Đăng ký listener cho khi voices thay đổi (Chrome cần này)
+    if (window.speechSynthesis) {
+      window.speechSynthesis.onvoiceschanged = loadVoices;
+    }
+
+    return () => {
+      if (window.speechSynthesis) {
+        window.speechSynthesis.onvoiceschanged = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const savedLanguage = localStorage.getItem('selectedLanguage');
@@ -168,17 +194,40 @@ function ChatPage() {
 
   // Hàm lấy voice phù hợp với ngôn ngữ
   const getVoiceForLanguage = (langCode) => {
-    const voices = window.speechSynthesis.getVoices();
+    // Sử dụng voices đã load sẵn, hoặc load lại nếu cần
+    const voices = availableVoices.length > 0
+      ? availableVoices
+      : window.speechSynthesis.getVoices();
 
-    // Tìm voice phù hợp với ngôn ngữ (ví dụ: vi-VN hoặc vi)
+    const shortLang = langCode.split('-')[0]; // vi, en, km
+
+    // Ưu tiên 1: Tìm voice khớp chính xác với langCode (ví dụ: vi-VN)
     let voice = voices.find(v => v.lang === langCode);
 
-    // Nếu không tìm thấy, thử tìm với mã ngôn ngữ ngắn (vi, en, km)
+    // Ưu tiên 2: Tìm voice bắt đầu bằng mã ngắn (ví dụ: vi)
     if (!voice) {
-      const shortLang = langCode.split('-')[0];
-      voice = voices.find(v => v.lang.startsWith(shortLang));
+      voice = voices.find(v => v.lang.startsWith(shortLang + '-'));
     }
 
+    // Ưu tiên 3: Tìm voice có lang là mã ngắn (ví dụ: vi)
+    if (!voice) {
+      voice = voices.find(v => v.lang === shortLang);
+    }
+
+    // Ưu tiên 4: Tìm voice có tên chứa tên ngôn ngữ
+    if (!voice) {
+      const langNames = {
+        vi: ['vietnamese', 'tiếng việt', 'viet'],
+        en: ['english'],
+        km: ['khmer', 'cambodian']
+      };
+      const names = langNames[shortLang] || [];
+      voice = voices.find(v =>
+        names.some(name => v.name.toLowerCase().includes(name))
+      );
+    }
+
+    console.log(`Finding voice for ${langCode}: ${voice ? voice.name : 'not found, using default'}`);
     return voice;
   };
 
@@ -195,43 +244,35 @@ function ChatPage() {
 
       const langCode = getLanguageCode(language);
       const utterance = new SpeechSynthesisUtterance(text);
+
+      // QUAN TRỌNG: Đặt lang TRƯỚC để browser có thể tự chọn voice phù hợp
       utterance.lang = langCode;
       utterance.rate = 0.9;
       utterance.pitch = 1.0;
 
-      // Hàm thực thi speech sau khi có voices
-      const speak = () => {
-        // Tìm và đặt voice phù hợp với ngôn ngữ
-        const voice = getVoiceForLanguage(langCode);
-        if (voice) {
-          utterance.voice = voice;
-        }
+      // Tìm và đặt voice phù hợp với ngôn ngữ
+      const voice = getVoiceForLanguage(langCode);
+      if (voice) {
+        utterance.voice = voice;
+        console.log(`Using voice: ${voice.name} (${voice.lang})`);
+      } else {
+        console.log(`No matching voice found for ${langCode}, browser will use default for this language`);
+      }
 
-        utterance.onend = () => {
-          setPlayingAudio(null);
-          resolve();
-        };
-
-        utterance.onerror = (error) => {
-          setPlayingAudio(null);
-          reject(error);
-        };
-
-        // Lưu utterance để có thể dừng sau
-        setPlayingAudio({ type: 'speech', utterance });
-        window.speechSynthesis.speak(utterance);
+      utterance.onend = () => {
+        setPlayingAudio(null);
+        resolve();
       };
 
-      // Voices có thể chưa được load, cần đợi
-      const voices = window.speechSynthesis.getVoices();
-      if (voices.length > 0) {
-        speak();
-      } else {
-        // Đợi voices được load
-        window.speechSynthesis.onvoiceschanged = () => {
-          speak();
-        };
-      }
+      utterance.onerror = (error) => {
+        console.error('Speech synthesis error:', error);
+        setPlayingAudio(null);
+        reject(error);
+      };
+
+      // Lưu utterance để có thể dừng sau
+      setPlayingAudio({ type: 'speech', utterance });
+      window.speechSynthesis.speak(utterance);
     });
   };
 
