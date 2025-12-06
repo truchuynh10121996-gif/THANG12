@@ -5,7 +5,8 @@ import {
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
-  Platform
+  Platform,
+  Image
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -185,6 +186,14 @@ export default function ChatBubble({ message, language }) {
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 0 }}
         >
+          {/* Hiển thị ảnh nếu có */}
+          {message.hasImage && message.imageUri && (
+            <Image
+              source={{ uri: message.imageUri }}
+              style={styles.messageImage}
+              resizeMode="cover"
+            />
+          )}
           <Text style={[styles.text, styles.userText]}>{message.text}</Text>
           <Text style={[styles.time, styles.userTime]}>{formatTime(message.timestamp)}</Text>
         </LinearGradient>
@@ -272,5 +281,11 @@ const styles = StyleSheet.create({
   },
   speakerButton: {
     padding: 5
+  },
+  messageImage: {
+    width: '100%',
+    height: 150,
+    borderRadius: 10,
+    marginBottom: 8
   }
 });

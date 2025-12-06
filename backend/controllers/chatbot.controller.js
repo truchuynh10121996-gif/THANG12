@@ -1,6 +1,7 @@
 const geminiService = require('../services/gemini.service');
 const qaService = require('../services/qa.service');
 const conversationService = require('../services/conversation.service');
+const ocrService = require('../services/ocr.service');
 
 /**
  * Gửi tin nhắn đến chatbot và nhận phản hồi
@@ -151,6 +152,189 @@ exports.detectLanguage = async (req, res) => {
   }
 };
 
+/**
+ * Xử lý ảnh chụp màn hình tin nhắn/email để phát hiện lừa đảo
+ * POST /api/chatbot/analyze-image
+ */
+exports.analyzeImage = async (req, res) => {
+  try {
+    const { imageBase64, conversationId, language = 'vi' } = req.body;
+
+    if (!imageBase64) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Image is required (base64 format)'
+      });
+    }
+
+    console.log('[Chatbot] Nhận yêu cầu phân tích ảnh');
+
+    // Bước 1: Chuyển base64 thành buffer và xử lý OCR
+    const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, '');
+    const imageBuffer = Buffer.from(base64Data, 'base64');
+
+    const ocrResult = await ocrService.processImageForFraudDetection(imageBuffer, language);
+
+    if (!ocrResult.success) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Không thể trích xuất văn bản từ ảnh. Vui lòng thử lại với ảnh rõ hơn.',
+        ocrError: ocrResult.error
+      });
+    }
+
+    // Bước 2: Lấy lịch sử hội thoại nếu có
+    let conversationHistory = [];
+    if (conversationId) {
+      const existingConversation = await conversationService.getConversation(conversationId);
+      if (existingConversation && existingConversation.messages) {
+        conversationHistory = existingConversation.messages;
+      }
+    }
+
+    // Bước 3: Tạo message cho chatbot với context từ OCR
+    const userMessage = generateImageAnalysisMessage(ocrResult, language);
+
+    // Bước 4: Lấy context từ Q&A scenarios
+    const qaContext = await qaService.getRelevantQA(ocrResult.extractedText);
+
+    // Bước 5: Tạo system prompt đặc biệt cho phân tích ảnh
+    const systemPrompt = generateImageAnalysisPrompt(language, qaContext, ocrResult);
+
+    // Bước 6: Gọi Gemini API
+    const botResponse = await geminiService.generateResponse(userMessage, systemPrompt, conversationHistory);
+
+    // Bước 7: Lưu hội thoại
+    const conversation = await conversationService.saveMessage({
+      conversationId: conversationId || generateConversationId(),
+      userMessage: `[Ảnh chụp màn hình]\n${ocrResult.extractedText.substring(0, 500)}...`,
+      botResponse: botResponse,
+      language: language,
+      timestamp: new Date()
+    });
+
+    // Trả về kết quả
+    res.status(200).json({
+      status: 'success',
+      data: {
+        conversationId: conversation.conversationId,
+        response: botResponse,
+        language: language,
+        isFraudAlert: ocrResult.fraudAnalysis.isFraudulent || checkFraudKeywords(botResponse),
+        ocrResult: {
+          extractedText: ocrResult.extractedText,
+          confidence: ocrResult.confidence,
+          fraudAnalysis: ocrResult.fraudAnalysis
+        },
+        timestamp: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    console.error('Chatbot analyzeImage error:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to analyze image',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Xử lý ảnh upload (multipart/form-data)
+ * POST /api/chatbot/analyze-image-upload
+ */
+exports.analyzeImageUpload = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Vui lòng upload một ảnh'
+      });
+    }
+
+    const { conversationId, language = 'vi' } = req.body;
+    const imagePath = req.file.path;
+
+    console.log(`[Chatbot] Nhận yêu cầu phân tích ảnh upload: ${req.file.originalname}`);
+
+    // Bước 1: Xử lý OCR
+    const ocrResult = await ocrService.processImageForFraudDetection(imagePath, language);
+
+    // Xóa file tạm sau khi xử lý
+    ocrService.cleanupTempFile(imagePath);
+
+    if (!ocrResult.success) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Không thể trích xuất văn bản từ ảnh. Vui lòng thử lại với ảnh rõ hơn.',
+        ocrError: ocrResult.error
+      });
+    }
+
+    // Bước 2: Lấy lịch sử hội thoại nếu có
+    let conversationHistory = [];
+    if (conversationId) {
+      const existingConversation = await conversationService.getConversation(conversationId);
+      if (existingConversation && existingConversation.messages) {
+        conversationHistory = existingConversation.messages;
+      }
+    }
+
+    // Bước 3: Tạo message cho chatbot với context từ OCR
+    const userMessage = generateImageAnalysisMessage(ocrResult, language);
+
+    // Bước 4: Lấy context từ Q&A scenarios
+    const qaContext = await qaService.getRelevantQA(ocrResult.extractedText);
+
+    // Bước 5: Tạo system prompt đặc biệt cho phân tích ảnh
+    const systemPrompt = generateImageAnalysisPrompt(language, qaContext, ocrResult);
+
+    // Bước 6: Gọi Gemini API
+    const botResponse = await geminiService.generateResponse(userMessage, systemPrompt, conversationHistory);
+
+    // Bước 7: Lưu hội thoại
+    const conversation = await conversationService.saveMessage({
+      conversationId: conversationId || generateConversationId(),
+      userMessage: `[Ảnh chụp màn hình]\n${ocrResult.extractedText.substring(0, 500)}...`,
+      botResponse: botResponse,
+      language: language,
+      timestamp: new Date()
+    });
+
+    // Trả về kết quả
+    res.status(200).json({
+      status: 'success',
+      data: {
+        conversationId: conversation.conversationId,
+        response: botResponse,
+        language: language,
+        isFraudAlert: ocrResult.fraudAnalysis.isFraudulent || checkFraudKeywords(botResponse),
+        ocrResult: {
+          extractedText: ocrResult.extractedText,
+          confidence: ocrResult.confidence,
+          fraudAnalysis: ocrResult.fraudAnalysis
+        },
+        timestamp: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    console.error('Chatbot analyzeImageUpload error:', error);
+
+    // Xóa file tạm nếu có lỗi
+    if (req.file?.path) {
+      ocrService.cleanupTempFile(req.file.path);
+    }
+
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to analyze image',
+      error: error.message
+    });
+  }
+};
+
 // Helper Functions
 
 function generateConversationId() {
@@ -239,4 +423,85 @@ function checkFraudKeywords(response) {
 
   const lowerResponse = response.toLowerCase();
   return fraudKeywords.some(keyword => lowerResponse.includes(keyword));
+}
+
+/**
+ * Tạo message cho chatbot từ kết quả OCR
+ */
+function generateImageAnalysisMessage(ocrResult, language) {
+  const { extractedText, fraudAnalysis } = ocrResult;
+
+  if (language === 'vi') {
+    return `Tôi vừa nhận được một tin nhắn/email như sau và muốn kiểm tra xem có phải lừa đảo không:
+
+"${extractedText}"
+
+${fraudAnalysis.isFraudulent ? `
+Hệ thống đã phát hiện ${fraudAnalysis.foundKeywords.length} từ khóa đáng ngờ: ${fraudAnalysis.foundKeywords.slice(0, 5).join(', ')}
+Mức độ rủi ro: ${fraudAnalysis.riskLevel === 'high' ? 'CAO' : fraudAnalysis.riskLevel === 'medium' ? 'TRUNG BÌNH' : 'THẤP'}
+` : ''}
+
+Hãy phân tích chi tiết tin nhắn này và cho tôi biết đây có phải là lừa đảo không? Tôi nên làm gì?`;
+  } else {
+    return `I just received this message/email and want to check if it's a scam:
+
+"${extractedText}"
+
+${fraudAnalysis.isFraudulent ? `
+System detected ${fraudAnalysis.foundKeywords.length} suspicious keywords: ${fraudAnalysis.foundKeywords.slice(0, 5).join(', ')}
+Risk level: ${fraudAnalysis.riskLevel.toUpperCase()}
+` : ''}
+
+Please analyze this message in detail and let me know if this is a fraud? What should I do?`;
+  }
+}
+
+/**
+ * Tạo system prompt đặc biệt cho phân tích ảnh
+ */
+function generateImageAnalysisPrompt(language, qaContext, ocrResult) {
+  const { fraudAnalysis } = ocrResult;
+
+  const basePrompt = `Bạn là Chatbot cảnh báo lừa đảo cho khách hàng ngân hàng Agribank. Người dùng vừa gửi ảnh chụp màn hình một tin nhắn/email và yêu cầu bạn phân tích.
+
+NHIỆM VỤ ĐẶC BIỆT - PHÂN TÍCH ẢNH CHỤP MÀN HÌNH:
+1. Phân tích nội dung tin nhắn/email được trích xuất từ ảnh
+2. Xác định các dấu hiệu lừa đảo cụ thể
+3. Đưa ra kết luận rõ ràng: ĐÂY LÀ LỪA ĐẢO hoặc AN TOÀN
+4. Cung cấp hướng dẫn xử lý cụ thể
+
+KẾT QUẢ PHÂN TÍCH TỰ ĐỘNG:
+- Mức độ rủi ro: ${fraudAnalysis.riskLevel === 'high' ? 'CAO' : fraudAnalysis.riskLevel === 'medium' ? 'TRUNG BÌNH' : 'THẤP'}
+- Điểm rủi ro: ${fraudAnalysis.riskScore}/100
+- Từ khóa đáng ngờ: ${fraudAnalysis.foundKeywords.length > 0 ? fraudAnalysis.foundKeywords.join(', ') : 'Không có'}
+- Link đáng ngờ: ${fraudAnalysis.foundUrls.length > 0 ? 'Có' : 'Không'}
+
+DỮ LIỆU THAM KHẢO:
+${qaContext}
+
+ĐỊNH DẠNG TRẢ LỜI:
+${fraudAnalysis.isFraudulent ? `
+⚠️ **KẾT LUẬN:** [Kết luận của bạn]
+
+📋 **PHÂN TÍCH CHI TIẾT:**
+• Liệt kê các dấu hiệu lừa đảo cụ thể trong tin nhắn
+
+🚫 **VIỆC KHÔNG LÀM:**
+1. ...
+2. ...
+
+✅ **VIỆC CẦN LÀM NGAY:**
+1. ...
+2. ...
+3. Liên hệ hotline Agribank: 1900 558 818
+` : `
+Phân tích và kết luận về mức độ an toàn của tin nhắn.
+`}
+
+NGUYÊN TẮC:
+- Không bao giờ yêu cầu OTP/mật khẩu/số thẻ
+- Luôn cung cấp hotline 1900558818 trong cảnh báo
+- Trả lời bằng ngôn ngữ: ${language === 'vi' ? 'Tiếng Việt' : language === 'en' ? 'English' : language}`;
+
+  return basePrompt;
 }
