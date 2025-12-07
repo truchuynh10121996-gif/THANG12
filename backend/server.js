@@ -14,6 +14,7 @@ const qaRoutes = require('./routes/qa.routes');
 const ttsRoutes = require('./routes/tts.routes');
 const sttRoutes = require('./routes/stt.routes');
 const ocrRoutes = require('./routes/ocr.routes');
+const mlRoutes = require('./routes/ml.routes');
 
 // Initialize Express app
 const app = express();
@@ -74,6 +75,7 @@ app.use('/api/qa', qaRoutes);
 app.use('/api/tts', ttsRoutes);
 app.use('/api/stt', sttRoutes);
 app.use('/api/ocr', ocrRoutes);
+app.use('/api/ml', mlRoutes);
 
 // Health Check Endpoint
 app.get('/api/health', (req, res) => {

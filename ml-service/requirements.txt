@@ -1,0 +1,50 @@
+# ML Fraud Detection Service - Dependencies
+# ==========================================
+
+# Web Framework
+flask==3.0.0
+flask-cors==4.0.0
+gunicorn==21.2.0
+
+# Data Processing
+pandas==2.1.3
+numpy==1.26.2
+scipy==1.11.4
+
+# Machine Learning - Traditional
+scikit-learn==1.3.2
+lightgbm==4.1.0
+xgboost==2.0.2
+imbalanced-learn==0.11.0
+
+# Deep Learning
+torch==2.1.1
+torch-geometric==2.4.0
+
+# Visualization
+matplotlib==3.8.2
+seaborn==0.13.0
+plotly==5.18.0
+
+# Model Explainability
+shap==0.43.0
+lime==0.2.0.1
+
+# API & Utilities
+python-dotenv==1.0.0
+requests==2.31.0
+joblib==1.3.2
+pyyaml==6.0.1
+
+# Testing
+pytest==7.4.3
+pytest-cov==4.1.0
+
+# Logging
+loguru==0.7.2
+
+# Progress bars
+tqdm==4.66.1
+
+# Date/Time handling
+python-dateutil==2.8.2
