@@ -155,6 +155,74 @@ export const trainAll = async (params = {}) => {
   return api.post('/train/all', params);
 };
 
+// ============ INDIVIDUAL MODEL TRAINING APIs ============
+
+/**
+ * Train Isolation Forest model
+ * @param {FormData} formData - FormData chứa file CSV (không cần label)
+ * @returns {Promise} - Kết quả training
+ */
+export const trainIsolationForest = async (formData) => {
+  return api.post('/train/isolation_forest', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+};
+
+/**
+ * Train LightGBM model
+ * @param {FormData} formData - FormData chứa file CSV (cần có label is_fraud)
+ * @returns {Promise} - Kết quả training
+ */
+export const trainLightGBM = async (formData) => {
+  return api.post('/train/lightgbm', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+};
+
+/**
+ * Train Autoencoder model
+ * @param {FormData} formData - FormData chứa file CSV (không cần label)
+ * @returns {Promise} - Kết quả training
+ */
+export const trainAutoencoder = async (formData) => {
+  return api.post('/train/autoencoder', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+};
+
+/**
+ * Train LSTM model
+ * @param {FormData} formData - FormData chứa file CSV (cần có label is_fraud + user_id)
+ * @returns {Promise} - Kết quả training
+ */
+export const trainLSTM = async (formData) => {
+  return api.post('/train/lstm', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+};
+
+/**
+ * Train GNN model
+ * @param {FormData} formData - FormData chứa file CSV (cần thông tin nodes và edges)
+ * @returns {Promise} - Kết quả training
+ */
+export const trainGNN = async (formData) => {
+  return api.post('/train/gnn', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+};
+
+/**
+ * Train tất cả models với file upload
+ * @param {FormData} formData - FormData chứa file CSV
+ * @returns {Promise} - Kết quả training
+ */
+export const trainAllWithData = async (formData) => {
+  return api.post('/train/all/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+};
+
 // ============ METRICS APIs ============
 
 /**
