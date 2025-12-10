@@ -89,17 +89,27 @@ const MODEL_CONFIGS = {
         { name: 'velocity_24h', type: 'number', description: 'Số giao dịch trong 24 giờ' },
       ],
       optionalColumns: [
-        { name: 'is_international', type: 'number (0/1)', description: 'Giao dịch quốc tế' },
+        { name: 'amount_log', type: 'number', description: 'Log của số tiền giao dịch' },
+        { name: 'amount_norm', type: 'number', description: 'Số tiền chuẩn hóa' },
+        { name: 'time_gap_prev_min', type: 'number', description: 'Khoảng cách thời gian với giao dịch trước (phút)' },
+        { name: 'freq_norm', type: 'number', description: 'Tần suất giao dịch chuẩn hóa' },
         { name: 'is_new_recipient', type: 'number (0/1)', description: 'Người nhận mới' },
+        { name: 'recipient_count_30d', type: 'number', description: 'Số người nhận trong 30 ngày' },
         { name: 'is_new_device', type: 'number (0/1)', description: 'Thiết bị mới' },
-        { name: 'amount_deviation_ratio', type: 'number', description: 'Tỷ lệ lệch chuẩn số tiền' },
-        { name: 'session_duration_sec', type: 'number', description: 'Thời gian phiên (giây)' },
-        { name: 'login_attempts', type: 'number', description: 'Số lần đăng nhập' },
+        { name: 'device_count_30d', type: 'number', description: 'Số thiết bị trong 30 ngày' },
+        { name: 'location_diff_km', type: 'number', description: 'Khoảng cách vị trí (km)' },
+        { name: 'channel', type: 'string/number', description: 'Kênh giao dịch' },
+        { name: 'account_age_days', type: 'number', description: 'Tuổi tài khoản (ngày)' },
+        { name: 'amount_percentile_system', type: 'number', description: 'Phần trăm số tiền trong hệ thống' },
+        { name: 'global_anomaly_score_prev', type: 'number', description: 'Điểm bất thường trước đó' },
+        { name: 'amount_vs_avg_user_1m', type: 'number', description: '🆕 Tỷ lệ số tiền so với TB user 1 tháng' },
+        { name: 'is_first_large_tx', type: 'number (0/1)', description: '🆕 Giao dịch lớn đầu tiên' },
+        { name: 'recipient_is_suspicious', type: 'number (0/1)', description: '🆕 Người nhận nghi ngờ' },
       ],
       notes: [
         'KHÔNG cần cột nhãn is_fraud - đây là mô hình unsupervised',
-        'Tất cả các cột phải là dữ liệu số',
-        'Nên có ít nhất 5% dữ liệu bất thường trong tập dữ liệu',
+        'Tất cả các cột phải là dữ liệu số (channel sẽ tự động chuyển đổi)',
+        'Hỗ trợ đầy đủ 24 features (22 features training sau khi loại tx_id, user_id)',
         'Model sẽ tự học pattern bình thường và phát hiện bất thường',
       ],
     },
@@ -615,6 +625,7 @@ function ModelTraining() {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [tabValue, setTabValue] = useState(0);
+  const [trainingResult, setTrainingResult] = useState(null); // Kết quả training chi tiết
 
   const fetchData = async () => {
     try {
@@ -661,19 +672,58 @@ function ModelTraining() {
       setTrainingModel(modelKey);
       setSuccess(null);
       setError(null);
+      setTrainingResult(null);
 
       const formData = new FormData();
       formData.append('file', file);
 
       const config = MODEL_CONFIGS[modelKey];
       if (config && config.trainFunction) {
-        await config.trainFunction(formData);
-        setSuccess(`Training ${config.name} hoàn tất!`);
+        const result = await config.trainFunction(formData);
+        console.log('[Training Result]', result);
+
+        // Lưu kết quả training chi tiết
+        setTrainingResult({
+          modelName: config.name,
+          modelKey: modelKey,
+          ...result
+        });
+
+        // Tạo message thông báo chi tiết
+        if (result.success) {
+          let successMsg = `✅ Training ${config.name} thành công!\n`;
+          if (result.training_info) {
+            successMsg += `📊 Dữ liệu: ${result.training_info.samples_count?.toLocaleString() || 'N/A'} mẫu, ${result.training_info.features_count || 'N/A'} features`;
+          }
+          if (result.metrics) {
+            if (result.metrics.accuracy !== undefined) {
+              successMsg += `\n🎯 Accuracy: ${(result.metrics.accuracy * 100).toFixed(2)}%`;
+            }
+            if (result.metrics.roc_auc !== undefined) {
+              successMsg += ` | ROC-AUC: ${(result.metrics.roc_auc * 100).toFixed(2)}%`;
+            }
+            if (result.metrics.anomaly_ratio !== undefined) {
+              successMsg += `\n🔍 Phát hiện ${result.metrics.detected_anomalies} bất thường (${(result.metrics.anomaly_ratio * 100).toFixed(2)}%)`;
+            }
+          }
+          setSuccess(successMsg);
+        } else {
+          setError(`Training ${config.name} thất bại: ${result.error || 'Unknown error'}`);
+        }
       }
 
       await fetchData();
     } catch (err) {
-      setError(`Training ${modelKey} thất bại: ${err.message}`);
+      console.error('[Training Error]', err);
+      const errorMsg = err.response?.data?.error || err.message || 'Lỗi không xác định';
+      const errorDetails = err.response?.data?.details || '';
+      setError(`Training ${modelKey} thất bại: ${errorMsg}`);
+      setTrainingResult({
+        modelKey: modelKey,
+        success: false,
+        error: errorMsg,
+        details: errorDetails
+      });
     } finally {
       setTraining(false);
       setTrainingModel(null);
@@ -730,8 +780,150 @@ function ModelTraining() {
         </Button>
       </Box>
 
-      {error && <Alert severity="warning" sx={{ mb: 2 }}>{error}</Alert>}
-      {success && <Alert severity="success" sx={{ mb: 2 }}>{success}</Alert>}
+      {error && <Alert severity="error" sx={{ mb: 2, whiteSpace: 'pre-line' }}>{error}</Alert>}
+      {success && <Alert severity="success" sx={{ mb: 2, whiteSpace: 'pre-line' }}>{success}</Alert>}
+
+      {/* Hiển thị kết quả training chi tiết */}
+      {trainingResult && trainingResult.success && (
+        <Card sx={{ mb: 3, border: '2px solid #4caf50' }}>
+          <CardContent>
+            <Typography variant="h6" sx={{ mb: 2, color: 'success.main', display: 'flex', alignItems: 'center', gap: 1 }}>
+              <CheckCircleIcon color="success" />
+              Kết quả Training: {trainingResult.modelName || trainingResult.modelKey}
+            </Typography>
+
+            <Grid container spacing={2}>
+              {/* Thông tin dữ liệu */}
+              {trainingResult.training_info && (
+                <Grid item xs={12} md={6}>
+                  <Paper sx={{ p: 2, bgcolor: 'grey.50' }}>
+                    <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
+                      📊 Thông tin dữ liệu đã train
+                    </Typography>
+                    <Typography variant="body2">
+                      • Số mẫu: <strong>{trainingResult.training_info.samples_count?.toLocaleString()}</strong>
+                    </Typography>
+                    <Typography variant="body2">
+                      • Số features: <strong>{trainingResult.training_info.features_count}</strong>
+                    </Typography>
+                    {trainingResult.training_info.feature_names && (
+                      <Typography variant="body2" sx={{ mt: 1 }}>
+                        • Features: <code style={{ fontSize: '0.75rem' }}>
+                          {trainingResult.training_info.feature_names.slice(0, 5).join(', ')}
+                          {trainingResult.training_info.feature_names.length > 5 && ` và ${trainingResult.training_info.feature_names.length - 5} cột khác...`}
+                        </code>
+                      </Typography>
+                    )}
+                    {trainingResult.training_info.config && (
+                      <>
+                        <Divider sx={{ my: 1 }} />
+                        <Typography variant="caption" color="text.secondary">
+                          Config: n_estimators={trainingResult.training_info.config.n_estimators},
+                          contamination={trainingResult.training_info.config.contamination}
+                        </Typography>
+                      </>
+                    )}
+                  </Paper>
+                </Grid>
+              )}
+
+              {/* Metrics */}
+              {trainingResult.metrics && (
+                <Grid item xs={12} md={6}>
+                  <Paper sx={{ p: 2, bgcolor: 'success.50' }}>
+                    <Typography variant="subtitle2" color="success.dark" sx={{ mb: 1 }}>
+                      🎯 Độ chính xác Model
+                    </Typography>
+                    {trainingResult.metrics.mode === 'unsupervised' ? (
+                      <>
+                        <Typography variant="body2">
+                          • Tổng số mẫu: <strong>{trainingResult.metrics.total_samples?.toLocaleString()}</strong>
+                        </Typography>
+                        <Typography variant="body2">
+                          • Phát hiện bất thường: <strong style={{ color: '#d32f2f' }}>
+                            {trainingResult.metrics.detected_anomalies} ({(trainingResult.metrics.anomaly_ratio * 100).toFixed(2)}%)
+                          </strong>
+                        </Typography>
+                        <Typography variant="body2">
+                          • Avg Fraud Probability: <strong>{(trainingResult.metrics.avg_fraud_probability * 100).toFixed(2)}%</strong>
+                        </Typography>
+                        <Typography variant="body2">
+                          • Anomaly Score: <strong>
+                            {trainingResult.metrics.min_anomaly_score?.toFixed(4)} → {trainingResult.metrics.max_anomaly_score?.toFixed(4)}
+                          </strong>
+                        </Typography>
+                      </>
+                    ) : (
+                      <>
+                        {trainingResult.metrics.accuracy !== undefined && (
+                          <Typography variant="body2">
+                            • Accuracy: <strong>{(trainingResult.metrics.accuracy * 100).toFixed(2)}%</strong>
+                          </Typography>
+                        )}
+                        {trainingResult.metrics.precision !== undefined && (
+                          <Typography variant="body2">
+                            • Precision: <strong>{(trainingResult.metrics.precision * 100).toFixed(2)}%</strong>
+                          </Typography>
+                        )}
+                        {trainingResult.metrics.recall !== undefined && (
+                          <Typography variant="body2">
+                            • Recall: <strong>{(trainingResult.metrics.recall * 100).toFixed(2)}%</strong>
+                          </Typography>
+                        )}
+                        {trainingResult.metrics.f1_score !== undefined && (
+                          <Typography variant="body2">
+                            • F1-Score: <strong>{(trainingResult.metrics.f1_score * 100).toFixed(2)}%</strong>
+                          </Typography>
+                        )}
+                        {trainingResult.metrics.roc_auc !== undefined && (
+                          <Typography variant="body2">
+                            • ROC-AUC: <strong style={{ color: trainingResult.metrics.roc_auc >= 0.9 ? '#4caf50' : trainingResult.metrics.roc_auc >= 0.8 ? '#ff9800' : '#d32f2f' }}>
+                              {(trainingResult.metrics.roc_auc * 100).toFixed(2)}%
+                            </strong>
+                          </Typography>
+                        )}
+                      </>
+                    )}
+                  </Paper>
+                </Grid>
+              )}
+
+              {/* Data Summary */}
+              {trainingResult.training_info?.data_summary && (
+                <Grid item xs={12}>
+                  <Accordion>
+                    <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                      <Typography variant="subtitle2">📋 Chi tiết xử lý dữ liệu</Typography>
+                    </AccordionSummary>
+                    <AccordionDetails>
+                      <Typography variant="body2" sx={{ mb: 1 }}>
+                        <strong>Cột trong file:</strong> {trainingResult.training_info.data_summary.columns_in_file?.join(', ')}
+                      </Typography>
+                      <Typography variant="body2" sx={{ mb: 1 }}>
+                        <strong>Cột dùng để train:</strong> {trainingResult.training_info.data_summary.columns_used_for_training?.join(', ')}
+                      </Typography>
+                      <Typography variant="body2" sx={{ mb: 1 }}>
+                        <strong>Cột bị loại bỏ:</strong> {trainingResult.training_info.data_summary.columns_excluded?.join(', ') || 'Không có'}
+                      </Typography>
+                      <Typography variant="body2">
+                        <strong>Giá trị missing đã fill:</strong> {trainingResult.training_info.data_summary.missing_values_filled || 0}
+                      </Typography>
+                    </AccordionDetails>
+                  </Accordion>
+                </Grid>
+              )}
+            </Grid>
+
+            <Button
+              size="small"
+              onClick={() => setTrainingResult(null)}
+              sx={{ mt: 2 }}
+            >
+              Đóng
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Tabs */}
       <Paper sx={{ mb: 3 }}>
