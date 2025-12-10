@@ -870,7 +870,7 @@ def train_isolation_forest():
     Dữ liệu đầu vào: CSV file với các cột giao dịch
     Không cần cột is_fraud (unsupervised learning)
 
-    Các cột được hỗ trợ:
+    Các cột được hỗ trợ (24 features):
     - tx_id, user_id (sẽ bị loại bỏ - identifiers)
     - amount, amount_log, amount_norm
     - hour_of_day, day_of_week, is_weekend
@@ -879,6 +879,9 @@ def train_isolation_forest():
     - is_new_device, device_count_30d, location_diff_km
     - channel, account_age_days, amount_percentile_system
     - global_anomaly_score_prev
+    - amount_vs_avg_user_1m (MỚI): Tỷ lệ số tiền so với trung bình user trong 1 tháng
+    - is_first_large_tx (MỚI): Có phải giao dịch lớn đầu tiên không
+    - recipient_is_suspicious (MỚI): Người nhận có nghi ngờ không
 
     Response:
     {
@@ -886,7 +889,7 @@ def train_isolation_forest():
         "message": "Training Isolation Forest thành công",
         "training_info": {
             "samples_count": 1000,
-            "features_count": 19,
+            "features_count": 22,
             "feature_names": [...],
             "contamination": 0.05,
             "n_estimators": 100
