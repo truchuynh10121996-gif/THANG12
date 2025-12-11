@@ -49,6 +49,7 @@ import {
   Help as HelpIcon,
   CheckCircle as CheckCircleIcon,
   Warning as WarningIcon,
+  Download as DownloadIcon,
 } from '@mui/icons-material';
 import {
   getModelStatus,
