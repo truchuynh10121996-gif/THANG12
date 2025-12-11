@@ -46,7 +46,6 @@ import {
   ExpandMore as ExpandMoreIcon,
   Delete as DeleteIcon,
   Description as FileIcon,
-  Download as DownloadIcon,
   Help as HelpIcon,
   CheckCircle as CheckCircleIcon,
   Warning as WarningIcon,
@@ -271,13 +270,19 @@ function TabPanel({ children, value, index, ...other }) {
   );
 }
 
-// Model Card Component
-function ModelCard({ modelKey, config, status, onTrain, training, currentModel }) {
+// Model Card Component với trạng thái trained/untrained rõ ràng
+function ModelCard({ modelKey, config, status, onTrain, training, currentModel, trainedModels }) {
   const fileInputRef = useRef(null);
   const [selectedFile, setSelectedFile] = useState(null);
   const [dragOver, setDragOver] = useState(false);
   const isTraining = training && currentModel === modelKey;
-  const isFitted = status?.layer1?.fitted || status?.layer2?.models?.[modelKey];
+
+  // Kiểm tra model đã trained thành công từ session hiện tại
+  const isTrainedInSession = trainedModels?.includes(modelKey);
+  // Kiểm tra từ status API
+  const isFittedFromAPI = status?.layer1?.fitted || status?.layer2?.models?.[modelKey];
+  // Model được coi là đã train nếu có trong session hoặc từ API
+  const isTrained = isTrainedInSession || isFittedFromAPI;
 
   const handleFileSelect = (event) => {
     const file = event.target.files?.[0];
@@ -310,35 +315,48 @@ function ModelCard({ modelKey, config, status, onTrain, training, currentModel }
     }
   };
 
-  const handleDownloadSample = () => {
-    // Tạo sample data để download
-    const sampleData = generateSampleData(modelKey);
-    const blob = new Blob([sampleData], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = config.sampleFile;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  };
-
   return (
     <Card
       sx={{
         height: '100%',
-        border: `2px solid ${dragOver ? config.color : 'transparent'}`,
+        border: `3px solid ${isTrained ? '#4caf50' : (dragOver ? config.color : '#e0e0e0')}`,
+        bgcolor: isTrained ? 'rgba(76, 175, 80, 0.05)' : 'background.paper',
         transition: 'all 0.3s ease',
-        '&:hover': { boxShadow: 4 },
+        '&:hover': { boxShadow: 6 },
+        position: 'relative',
+        overflow: 'visible',
       }}
     >
+      {/* Badge hiển thị trạng thái train */}
+      {isTrained && (
+        <Box
+          sx={{
+            position: 'absolute',
+            top: -10,
+            right: 16,
+            bgcolor: '#4caf50',
+            color: 'white',
+            px: 2,
+            py: 0.5,
+            borderRadius: 2,
+            fontSize: '0.75rem',
+            fontWeight: 700,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 0.5,
+            boxShadow: 2,
+          }}
+        >
+          <CheckCircleIcon sx={{ fontSize: 16 }} />
+          ĐÃ HUẤN LUYỆN
+        </Box>
+      )}
       <CardContent>
         {/* Header */}
         <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
           <Typography variant="h4" sx={{ mr: 1 }}>{config.icon}</Typography>
           <Box sx={{ flex: 1 }}>
-            <Typography variant="h6" sx={{ fontWeight: 600 }}>
+            <Typography variant="h6" sx={{ fontWeight: 600, color: isTrained ? 'success.main' : 'text.primary' }}>
               {config.name}
             </Typography>
             <Box sx={{ display: 'flex', gap: 1, mt: 0.5 }}>
@@ -355,12 +373,6 @@ function ModelCard({ modelKey, config, status, onTrain, training, currentModel }
               />
             </Box>
           </Box>
-          <Chip
-            icon={isFitted ? <CheckCircleIcon /> : <WarningIcon />}
-            label={isFitted ? 'Trained' : 'Not Trained'}
-            color={isFitted ? 'success' : 'warning'}
-            size="small"
-          />
         </Box>
 
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
@@ -515,29 +527,23 @@ function ModelCard({ modelKey, config, status, onTrain, training, currentModel }
           )}
         </Box>
 
-        {/* Actions */}
-        <Box sx={{ display: 'flex', gap: 1 }}>
-          <Button
-            variant="contained"
-            startIcon={isTraining ? <CircularProgress size={20} color="inherit" /> : <PlayIcon />}
-            onClick={handleTrain}
-            disabled={!selectedFile || training}
-            sx={{ flex: 1, bgcolor: config.color }}
-          >
-            {isTraining ? 'Đang train...' : 'Train Model'}
-          </Button>
-          <Tooltip title="Tải file mẫu">
-            <Button
-              variant="outlined"
-              onClick={handleDownloadSample}
-              sx={{ minWidth: 'auto', px: 1 }}
-            >
-              <DownloadIcon />
-            </Button>
-          </Tooltip>
-        </Box>
+        {/* Actions - Chỉ có nút Train */}
+        <Button
+          variant="contained"
+          fullWidth
+          startIcon={isTraining ? <CircularProgress size={20} color="inherit" /> : <PlayIcon />}
+          onClick={handleTrain}
+          disabled={!selectedFile || training}
+          sx={{
+            bgcolor: isTrained ? '#2e7d32' : config.color,
+            '&:hover': { bgcolor: isTrained ? '#1b5e20' : undefined },
+            fontWeight: 600,
+          }}
+        >
+          {isTraining ? 'Đang huấn luyện...' : (isTrained ? 'Train lại' : 'Huấn luyện Model')}
+        </Button>
 
-        {isTraining && <LinearProgress sx={{ mt: 2 }} />}
+        {isTraining && <LinearProgress sx={{ mt: 2 }} color="success" />}
       </CardContent>
     </Card>
   );
@@ -626,6 +632,7 @@ function ModelTraining() {
   const [success, setSuccess] = useState(null);
   const [tabValue, setTabValue] = useState(0);
   const [trainingResult, setTrainingResult] = useState(null); // Kết quả training chi tiết
+  const [trainedModels, setTrainedModels] = useState([]); // Danh sách models đã train thành công
 
   const fetchData = async () => {
     try {
@@ -691,7 +698,15 @@ function ModelTraining() {
 
         // Tạo message thông báo chi tiết
         if (result.success) {
-          let successMsg = `✅ Training ${config.name} thành công!\n`;
+          // Thêm model vào danh sách đã train thành công
+          setTrainedModels(prev => {
+            if (!prev.includes(modelKey)) {
+              return [...prev, modelKey];
+            }
+            return prev;
+          });
+
+          let successMsg = `✅ HUẤN LUYỆN ${config.name.toUpperCase()} THÀNH CÔNG!\n`;
           if (result.training_info) {
             successMsg += `📊 Dữ liệu: ${result.training_info.samples_count?.toLocaleString() || 'N/A'} mẫu, ${result.training_info.features_count || 'N/A'} features`;
           }
@@ -708,7 +723,7 @@ function ModelTraining() {
           }
           setSuccess(successMsg);
         } else {
-          setError(`Training ${config.name} thất bại: ${result.error || 'Unknown error'}`);
+          setError(`Huấn luyện ${config.name} thất bại: ${result.error || 'Unknown error'}`);
         }
       }
 
@@ -952,6 +967,7 @@ function ModelTraining() {
                 onTrain={handleTrainModel}
                 training={training}
                 currentModel={trainingModel}
+                trainedModels={trainedModels}
               />
             </Grid>
           ))}
