@@ -97,6 +97,8 @@ class LightGBMModel:
         scale_pos_weight = num_neg / num_pos if num_pos > 0 else 1
 
         # Cấu hình LightGBM
+        # LƯU Ý: Không thể set cả is_unbalance và scale_pos_weight cùng lúc
+        # Sử dụng scale_pos_weight để xử lý imbalanced data (tính toán động)
         params = {
             'objective': self.config.get('objective', 'binary'),
             'metric': self.config.get('metric', 'auc'),
@@ -108,8 +110,7 @@ class LightGBMModel:
             'bagging_freq': self.config.get('bagging_freq', 5),
             'verbose': -1,
             'random_state': self.config.get('random_state', 42),
-            'scale_pos_weight': scale_pos_weight,
-            'is_unbalance': True
+            'scale_pos_weight': scale_pos_weight  # Xử lý class imbalance
         }
 
         # Tạo datasets
