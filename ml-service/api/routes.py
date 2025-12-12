@@ -1230,70 +1230,338 @@ def train_lightgbm():
 
 @api.route('/train/autoencoder', methods=['POST'])
 def train_autoencoder():
-    """Train Autoencoder model với file upload"""
+    """
+    Train Autoencoder model với file upload
+
+    QUAN TRỌNG: Autoencoder cần train CHỈ với normal data (is_fraud=0)
+    Lý do: Autoencoder học pattern "bình thường", nếu train cả fraud
+    thì model sẽ học cả fraud pattern và không phát hiện được anomaly.
+
+    Logic training:
+    1. Nếu có cột is_fraud:
+       - Tách normal_data (is_fraud=0) và fraud_data (is_fraud=1)
+       - Chia normal thành train (80%) / test (20%)
+       - Train CHỈ với normal_train
+       - Tính threshold từ normal_train (percentile 95)
+       - Test set = normal_test + ALL fraud
+       - Evaluate trên test set
+    2. Nếu không có is_fraud:
+       - Train với toàn bộ dữ liệu (giả sử là normal)
+       - Chỉ trả reconstruction error
+
+    Features columns được hỗ trợ (30 features):
+    amount_log, amount_to_balance_ratio, z_score_amount, is_round_amount,
+    amount_std_7d, hour_sin, hour_cos, day_of_week_sin, day_of_week_cos,
+    is_night_transaction, is_salary_period, tx_count_1h, tx_count_24h,
+    minutes_since_last_tx, velocity_change, amount_acceleration,
+    is_new_recipient, recipient_tx_count, is_same_bank,
+    tx_count_to_same_recipient_24h, recipient_account_age_days,
+    time_since_last_tx_to_recipient, is_new_device, channel_encoded,
+    is_usual_location, account_age_days, income_level, is_incremental_amount,
+    is_during_business_hours, recipient_total_received_24h
+    """
+    logger.info("="*60)
     logger.info("[AUTOENCODER] Bắt đầu training...")
+    logger.info("="*60)
 
     try:
+        # Kiểm tra file upload
         if 'file' not in request.files:
+            logger.error("[AUTOENCODER] Không có file được upload")
             return jsonify({
                 'success': False,
-                'error': 'Không có file được upload'
+                'error': 'Không có file được upload. Vui lòng chọn file CSV.'
             }), 400
 
         file = request.files['file']
-        df = pd.read_csv(file)
 
-        # Lấy features
-        exclude_cols = ['tx_id', 'transaction_id', 'user_id', 'id', 'timestamp', 'created_at', 'is_fraud', 'fraud_type']
+        if file.filename == '':
+            logger.error("[AUTOENCODER] Tên file trống")
+            return jsonify({
+                'success': False,
+                'error': 'Tên file trống. Vui lòng chọn file CSV.'
+            }), 400
+
+        if not file.filename.endswith('.csv'):
+            logger.error(f"[AUTOENCODER] File không phải CSV: {file.filename}")
+            return jsonify({
+                'success': False,
+                'error': 'File phải có định dạng .csv'
+            }), 400
+
+        # Đọc CSV
+        logger.info(f"[AUTOENCODER] Đang đọc file: {file.filename}")
+        df = pd.read_csv(file)
+        logger.info(f"[AUTOENCODER] Đọc file thành công: {len(df)} dòng, {len(df.columns)} cột")
+        logger.info(f"[AUTOENCODER] Các cột: {list(df.columns)}")
+
+        # Kiểm tra dữ liệu tối thiểu
+        if len(df) < 10:
+            logger.error(f"[AUTOENCODER] Dữ liệu quá ít: {len(df)} dòng")
+            return jsonify({
+                'success': False,
+                'error': f'Dữ liệu quá ít ({len(df)} dòng). Cần ít nhất 10 dòng để training.'
+            }), 400
+
+        # Các cột cần loại bỏ
+        identifier_cols = ['tx_id', 'transaction_id', 'user_id', 'id', 'timestamp', 'created_at']
+        label_cols = ['is_fraud', 'fraud', 'label', 'fraud_type']
+
+        # Lấy các cột features (loại bỏ identifier và label)
+        exclude_cols = identifier_cols + label_cols
         feature_cols = [col for col in df.columns if col.lower() not in [c.lower() for c in exclude_cols]]
 
-        X = df[feature_cols].copy()
+        logger.info(f"[AUTOENCODER] Các cột bị loại bỏ: {[c for c in df.columns if c.lower() in [e.lower() for e in exclude_cols]]}")
+        logger.info(f"[AUTOENCODER] Feature columns: {feature_cols}")
 
-        # Xử lý categorical và missing
-        for col in X.columns:
-            if X[col].dtype == 'object':
-                from sklearn.preprocessing import LabelEncoder
+        if len(feature_cols) == 0:
+            logger.error("[AUTOENCODER] Không có cột features")
+            return jsonify({
+                'success': False,
+                'error': 'Không tìm thấy cột features trong dữ liệu.'
+            }), 400
+
+        # Xử lý categorical columns và chuyển sang numeric
+        from sklearn.preprocessing import LabelEncoder
+
+        X_full = df[feature_cols].copy()
+        for col in X_full.columns:
+            if X_full[col].dtype == 'object':
                 le = LabelEncoder()
-                X[col] = le.fit_transform(X[col].fillna('unknown').astype(str))
+                X_full[col] = le.fit_transform(X_full[col].fillna('unknown').astype(str))
             else:
-                X[col] = pd.to_numeric(X[col], errors='coerce')
+                X_full[col] = pd.to_numeric(X_full[col], errors='coerce')
 
-        X = X.fillna(0)
-        feature_names = list(X.columns)
+        X_full = X_full.fillna(0)
+        feature_names = list(X_full.columns)
 
-        # Train autoencoder
+        logger.info(f"[AUTOENCODER] Features sau xử lý: {feature_names}")
+        logger.info(f"[AUTOENCODER] Shape dữ liệu: {X_full.shape}")
+
+        # Import các thư viện cần thiết
+        from sklearn.model_selection import train_test_split
+        from sklearn.metrics import roc_auc_score, f1_score, precision_score, recall_score, confusion_matrix
         from models.layer2.autoencoder import AutoencoderModel
 
-        model = AutoencoderModel()
-        model.fit(X.values, feature_names=feature_names, verbose=True)
-        model.save()
+        # ===== KIỂM TRA CÓ LABEL KHÔNG =====
+        has_label = False
+        label_col = None
+        for col in ['is_fraud', 'fraud', 'label']:
+            if col in df.columns:
+                label_col = col
+                has_label = True
+                break
 
-        # Tính reconstruction error
-        recon_error = model.get_reconstruction_error(X.values)
+        if has_label and label_col:
+            # ===== TRƯỜNG HỢP CÓ LABEL: TRAIN CHỈ VỚI NORMAL DATA =====
+            logger.info(f"[AUTOENCODER] Phát hiện cột label: '{label_col}'")
+            logger.info("[AUTOENCODER] Áp dụng logic: Train CHỈ với NORMAL data (is_fraud=0)")
 
-        logger.info("[AUTOENCODER] Training hoàn tất!")
+            y_full = df[label_col].values
 
-        return jsonify({
-            'success': True,
-            'message': 'Training Autoencoder thành công!',
-            'training_info': {
-                'samples_count': int(len(X)),
-                'features_count': int(len(feature_names)),
-                'feature_names': feature_names
-            },
-            'metrics': {
-                'avg_reconstruction_error': float(np.mean(recon_error)),
-                'max_reconstruction_error': float(np.max(recon_error)),
-                'threshold': float(model.threshold) if hasattr(model, 'threshold') else None
-            },
-            'timestamp': datetime.now().isoformat()
-        })
+            # Bước 1: Tách normal và fraud
+            normal_mask = y_full == 0
+            fraud_mask = y_full == 1
+
+            normal_data = X_full[normal_mask].values
+            fraud_data = X_full[fraud_mask].values
+
+            normal_count = len(normal_data)
+            fraud_count = len(fraud_data)
+
+            logger.info(f"[AUTOENCODER] Số samples normal (is_fraud=0): {normal_count}")
+            logger.info(f"[AUTOENCODER] Số samples fraud (is_fraud=1): {fraud_count}")
+
+            if normal_count < 10:
+                return jsonify({
+                    'success': False,
+                    'error': f'Không đủ dữ liệu normal để train ({normal_count} samples). Cần ít nhất 10 samples normal.'
+                }), 400
+
+            # Bước 2: Chia train/test cho NORMAL data (80/20)
+            X_normal_train, X_normal_test = train_test_split(
+                normal_data,
+                test_size=0.2,
+                random_state=42
+            )
+
+            logger.info(f"[AUTOENCODER] Normal train size: {len(X_normal_train)}")
+            logger.info(f"[AUTOENCODER] Normal test size: {len(X_normal_test)}")
+
+            # Bước 3: Train CHỈ với normal_train
+            logger.info("[AUTOENCODER] Bắt đầu train model với CHỈ normal data...")
+            model = AutoencoderModel()
+            model.fit(X_normal_train, feature_names=feature_names, verbose=True)
+
+            # Bước 4: Tính threshold từ normal_train (percentile 95)
+            train_errors = model.get_reconstruction_error(X_normal_train)
+            threshold = float(np.percentile(train_errors, 95))
+            model.threshold = threshold
+
+            logger.info(f"[AUTOENCODER] Threshold (percentile 95 từ normal_train): {threshold:.6f}")
+
+            # Bước 5: Tạo test set = normal_test + ALL fraud
+            if fraud_count > 0:
+                X_test = np.vstack([X_normal_test, fraud_data])
+                y_test = np.array([0] * len(X_normal_test) + [1] * fraud_count)
+            else:
+                X_test = X_normal_test
+                y_test = np.array([0] * len(X_normal_test))
+
+            logger.info(f"[AUTOENCODER] Test set size: {len(X_test)} (normal_test: {len(X_normal_test)}, all fraud: {fraud_count})")
+
+            # Bước 6: Evaluate và tính metrics
+            test_errors = model.get_reconstruction_error(X_test)
+            y_pred = (test_errors > threshold).astype(int)
+
+            # Tính reconstruction error trung bình cho từng nhóm
+            normal_test_errors = model.get_reconstruction_error(X_normal_test)
+            avg_recon_error_normal = float(np.mean(normal_test_errors))
+
+            if fraud_count > 0:
+                fraud_errors = model.get_reconstruction_error(fraud_data)
+                avg_recon_error_fraud = float(np.mean(fraud_errors))
+            else:
+                avg_recon_error_fraud = None
+
+            logger.info(f"[AUTOENCODER] Avg reconstruction error (normal): {avg_recon_error_normal:.6f}")
+            if avg_recon_error_fraud:
+                logger.info(f"[AUTOENCODER] Avg reconstruction error (fraud): {avg_recon_error_fraud:.6f}")
+
+            # Tính metrics
+            if fraud_count > 0:
+                roc_auc = float(roc_auc_score(y_test, test_errors))
+                f1 = float(f1_score(y_test, y_pred))
+                precision = float(precision_score(y_test, y_pred, zero_division=0))
+                recall = float(recall_score(y_test, y_pred, zero_division=0))
+
+                cm = confusion_matrix(y_test, y_pred)
+                tn, fp, fn, tp = cm.ravel() if cm.shape == (2, 2) else (0, 0, 0, 0)
+
+                logger.info(f"[AUTOENCODER] ROC-AUC: {roc_auc:.4f}")
+                logger.info(f"[AUTOENCODER] F1-Score: {f1:.4f}")
+                logger.info(f"[AUTOENCODER] Precision: {precision:.4f}")
+                logger.info(f"[AUTOENCODER] Recall: {recall:.4f}")
+                logger.info(f"[AUTOENCODER] Confusion Matrix: TP={tp}, TN={tn}, FP={fp}, FN={fn}")
+            else:
+                roc_auc = None
+                f1 = None
+                precision = None
+                recall = None
+                tp, tn, fp, fn = 0, len(X_normal_test), 0, 0
+                logger.warning("[AUTOENCODER] Không có fraud data để tính metrics đầy đủ")
+
+            # Lưu model
+            model.save()
+            logger.info("[AUTOENCODER] Đã lưu model thành công!")
+
+            logger.info("="*60)
+            logger.info("[AUTOENCODER] TRAINING THÀNH CÔNG!")
+            logger.info("="*60)
+
+            # Response với đầy đủ thông tin
+            response = {
+                'success': True,
+                'model': 'autoencoder',
+                'message': 'Autoencoder trained successfully! (Trained with ONLY normal data)',
+                'data_info': {
+                    'total_samples': int(len(df)),
+                    'normal_samples': int(normal_count),
+                    'fraud_samples': int(fraud_count),
+                    'train_samples': int(len(X_normal_train)),
+                    'test_samples': int(len(X_test)),
+                    'note': 'Model trained ONLY with normal data (is_fraud=0). Test set includes normal_test + all fraud.'
+                },
+                'training_info': {
+                    'threshold': threshold,
+                    'threshold_percentile': 95,
+                    'features_count': int(len(feature_names)),
+                    'feature_names': feature_names
+                },
+                'metrics': {
+                    'roc_auc': roc_auc,
+                    'f1_score': f1,
+                    'precision': precision,
+                    'recall': recall,
+                    'avg_reconstruction_error_normal': avg_recon_error_normal,
+                    'avg_reconstruction_error_fraud': avg_recon_error_fraud,
+                    'confusion_matrix': {
+                        'true_positives': int(tp),
+                        'true_negatives': int(tn),
+                        'false_positives': int(fp),
+                        'false_negatives': int(fn)
+                    }
+                },
+                'timestamp': datetime.now().isoformat()
+            }
+
+            return jsonify(response)
+
+        else:
+            # ===== TRƯỜNG HỢP KHÔNG CÓ LABEL: TRAIN VỚI TẤT CẢ DỮ LIỆU =====
+            logger.info("[AUTOENCODER] Không có cột label (is_fraud)")
+            logger.info("[AUTOENCODER] Giả định tất cả dữ liệu là NORMAL và train với toàn bộ")
+
+            # Train với toàn bộ dữ liệu
+            model = AutoencoderModel()
+            model.fit(X_full.values, feature_names=feature_names, verbose=True)
+
+            # Tính reconstruction error
+            recon_errors = model.get_reconstruction_error(X_full.values)
+            threshold = float(model.threshold) if model.threshold else float(np.percentile(recon_errors, 95))
+
+            # Lưu model
+            model.save()
+            logger.info("[AUTOENCODER] Đã lưu model thành công!")
+
+            logger.info("="*60)
+            logger.info("[AUTOENCODER] TRAINING THÀNH CÔNG (Unsupervised mode)!")
+            logger.info("="*60)
+
+            response = {
+                'success': True,
+                'model': 'autoencoder',
+                'message': 'Autoencoder trained successfully! (Unsupervised mode - no labels)',
+                'data_info': {
+                    'total_samples': int(len(X_full)),
+                    'normal_samples': None,
+                    'fraud_samples': None,
+                    'train_samples': int(len(X_full)),
+                    'test_samples': 0,
+                    'note': 'No label column found. Trained with all data assuming normal transactions.'
+                },
+                'training_info': {
+                    'threshold': threshold,
+                    'threshold_percentile': 95,
+                    'features_count': int(len(feature_names)),
+                    'feature_names': feature_names
+                },
+                'metrics': {
+                    'roc_auc': None,
+                    'f1_score': None,
+                    'precision': None,
+                    'recall': None,
+                    'avg_reconstruction_error': float(np.mean(recon_errors)),
+                    'max_reconstruction_error': float(np.max(recon_errors)),
+                    'min_reconstruction_error': float(np.min(recon_errors)),
+                    'std_reconstruction_error': float(np.std(recon_errors)),
+                    'confusion_matrix': None
+                },
+                'timestamp': datetime.now().isoformat()
+            }
+
+            return jsonify(response)
 
     except Exception as e:
-        logger.error(f"[AUTOENCODER] LỖI: {str(e)}")
+        error_msg = str(e)
+        error_traceback = traceback.format_exc()
+        logger.error(f"[AUTOENCODER] LỖI: {error_msg}")
+        logger.error(f"[AUTOENCODER] Traceback:\n{error_traceback}")
+
         return jsonify({
             'success': False,
-            'error': f'Training thất bại: {str(e)}'
+            'error': f'Training thất bại: {error_msg}',
+            'details': error_traceback
         }), 500
 
 
