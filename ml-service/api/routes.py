@@ -1567,26 +1567,96 @@ def train_autoencoder():
 
 @api.route('/train/lstm', methods=['POST'])
 def train_lstm():
-    """Train LSTM model với file upload"""
-    logger.info("[LSTM] Bắt đầu training...")
+    """
+    Train LSTM model với file upload
+
+    SỬ DỤNG LSTM DATA PIPELINE MỚI:
+    - Tính 40 features chuyên biệt cho fraud detection VN
+    - Tạo sequences 3D với sliding window
+    - Split theo user (không random) để tránh data leakage
+    - Padding cho users có ít giao dịch
+
+    Input CSV cần có các cột:
+    - user_id (bắt buộc): ID của user
+    - timestamp (bắt buộc): Thời gian giao dịch
+    - amount (bắt buộc): Số tiền giao dịch
+    - is_fraud (bắt buộc): Label fraud (0/1)
+    - recipient_id (khuyến nghị): ID người nhận
+    - balance (khuyến nghị): Số dư tài khoản
+    - channel (khuyến nghị): Kênh giao dịch (MOBILE/WEB/ATM)
+    - device_id (khuyến nghị): ID thiết bị
+    - location (khuyến nghị): Vị trí
+    - recipient_bank (khuyến nghị): Ngân hàng người nhận
+
+    Output:
+    - X_train: shape (n_train_sequences, seq_length, 40)
+    - X_test: shape (n_test_sequences, seq_length, 40)
+
+    Query params:
+    - seq_length (int): Độ dài sequence (mặc định 7)
+    - test_ratio (float): Tỷ lệ test set (mặc định 0.2)
+    """
+    logger.info("=" * 60)
+    logger.info("[LSTM] Bắt đầu training với LSTM Data Pipeline...")
+    logger.info("=" * 60)
 
     try:
+        # Kiểm tra file upload
         if 'file' not in request.files:
+            logger.error("[LSTM] Không có file được upload")
             return jsonify({
                 'success': False,
-                'error': 'Không có file được upload'
+                'error': 'Không có file được upload. Vui lòng chọn file CSV.'
             }), 400
 
         file = request.files['file']
-        df = pd.read_csv(file)
 
-        # Kiểm tra cột required
-        if 'user_id' not in df.columns:
+        if file.filename == '':
+            logger.error("[LSTM] Tên file trống")
             return jsonify({
                 'success': False,
-                'error': 'Cần có cột user_id để nhóm sequences'
+                'error': 'Tên file trống. Vui lòng chọn file CSV.'
             }), 400
 
+        if not file.filename.endswith('.csv'):
+            logger.error(f"[LSTM] File không phải CSV: {file.filename}")
+            return jsonify({
+                'success': False,
+                'error': 'File phải có định dạng .csv'
+            }), 400
+
+        # Lấy parameters từ request
+        seq_length = request.form.get('seq_length', 7, type=int)
+        test_ratio = request.form.get('test_ratio', 0.2, type=float)
+
+        logger.info(f"[LSTM] Đang đọc file: {file.filename}")
+        logger.info(f"[LSTM] Sequence length: {seq_length}")
+        logger.info(f"[LSTM] Test ratio: {test_ratio}")
+
+        # Đọc CSV
+        try:
+            df = pd.read_csv(file)
+            logger.info(f"[LSTM] Đọc file thành công: {len(df)} dòng, {len(df.columns)} cột")
+            logger.info(f"[LSTM] Các cột: {list(df.columns)}")
+        except Exception as e:
+            logger.error(f"[LSTM] Lỗi đọc file CSV: {str(e)}")
+            return jsonify({
+                'success': False,
+                'error': f'Không thể đọc file CSV: {str(e)}'
+            }), 400
+
+        # Kiểm tra các cột bắt buộc
+        required_cols = ['user_id', 'timestamp', 'amount']
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            logger.error(f"[LSTM] Thiếu cột bắt buộc: {missing_cols}")
+            return jsonify({
+                'success': False,
+                'error': f'Thiếu các cột bắt buộc: {missing_cols}. '
+                         f'LSTM cần: user_id, timestamp, amount, is_fraud'
+            }), 400
+
+        # Kiểm tra cột is_fraud
         label_col = None
         for col in ['is_fraud', 'fraud', 'label']:
             if col in df.columns:
@@ -1594,61 +1664,138 @@ def train_lstm():
                 break
 
         if label_col is None:
+            logger.error("[LSTM] Không có cột is_fraud")
             return jsonify({
                 'success': False,
-                'error': 'Cần có cột is_fraud cho supervised learning'
+                'error': 'Cần có cột is_fraud cho supervised learning. '
+                         'LSTM học từ patterns fraud đã biết.'
             }), 400
 
-        # Lấy features
-        exclude_cols = ['tx_id', 'transaction_id', 'user_id', 'id', 'timestamp', 'created_at', label_col, 'fraud_type']
-        feature_cols = [col for col in df.columns if col.lower() not in [c.lower() for c in exclude_cols]]
+        # Chuẩn hóa tên cột label
+        if label_col != 'is_fraud':
+            df['is_fraud'] = df[label_col]
 
-        X = df[feature_cols].copy()
-        y = df[label_col].values
+        # Kiểm tra dữ liệu tối thiểu
+        if len(df) < seq_length * 2:
+            logger.error(f"[LSTM] Dữ liệu quá ít: {len(df)} dòng")
+            return jsonify({
+                'success': False,
+                'error': f'Dữ liệu quá ít ({len(df)} dòng). '
+                         f'Cần ít nhất {seq_length * 2} giao dịch để training.'
+            }), 400
 
-        for col in X.columns:
-            if X[col].dtype == 'object':
-                from sklearn.preprocessing import LabelEncoder
-                le = LabelEncoder()
-                X[col] = le.fit_transform(X[col].fillna('unknown').astype(str))
-            else:
-                X[col] = pd.to_numeric(X[col], errors='coerce')
+        # Import và sử dụng LSTM Data Pipeline
+        logger.info("[LSTM] Khởi chạy LSTM Data Pipeline...")
 
-        X = X.fillna(0)
+        from utils.lstm_data_pipeline import prepare_lstm_data, FEATURE_NAMES
 
-        # Train LSTM
-        from models.layer2.lstm_sequence import LSTMModel
-        from sklearn.model_selection import train_test_split
-
-        X_train, X_test, y_train, y_test = train_test_split(
-            X.values, y, test_size=0.2, random_state=42
+        # Chạy pipeline để tạo sequences 3D
+        pipeline_result = prepare_lstm_data(
+            df_raw=df,
+            seq_length=seq_length,
+            test_ratio=test_ratio,
+            include_padding=True,
+            verbose=True
         )
 
-        model = LSTMModel()
-        model.fit(X_train, y_train, verbose=True)
+        X_train = pipeline_result['X_train']
+        y_train = pipeline_result['y_train']
+        X_test = pipeline_result['X_test']
+        y_test = pipeline_result['y_test']
+        feature_names = pipeline_result['feature_names']
+        metadata = pipeline_result['metadata']
 
+        logger.info(f"[LSTM] Pipeline hoàn tất!")
+        logger.info(f"[LSTM] X_train shape: {X_train.shape}")
+        logger.info(f"[LSTM] X_test shape: {X_test.shape}")
+        logger.info(f"[LSTM] Features: {len(feature_names)}")
+
+        # Kiểm tra có đủ dữ liệu không
+        if len(X_train) == 0:
+            return jsonify({
+                'success': False,
+                'error': 'Không tạo được sequences từ dữ liệu. '
+                         'Kiểm tra lại cột user_id và timestamp.'
+            }), 400
+
+        # Import và train LSTM model
+        from models.layer2.lstm_sequence import LSTMSequenceModel
+
+        logger.info("[LSTM] Bắt đầu train LSTM model...")
+
+        model = LSTMSequenceModel()
+
+        # Train với sequences 3D
+        model.fit(
+            sequences=X_train,
+            labels=y_train,
+            validation_split=0.1,
+            verbose=True
+        )
+
+        # Evaluate trên test set
+        logger.info("[LSTM] Đánh giá model trên test set...")
         metrics = model.evaluate(X_test, y_test, verbose=True)
+
+        # Lưu model
         model.save()
+        logger.info("[LSTM] Đã lưu model thành công!")
 
-        logger.info("[LSTM] Training hoàn tất!")
+        # Cập nhật prediction service
+        try:
+            prediction_service.predictor.layer2.lstm = model
+            prediction_service.predictor.is_fitted['layer2'] = True
+        except Exception as e:
+            logger.warning(f"[LSTM] Không thể cập nhật prediction service: {e}")
 
-        return jsonify({
+        logger.info("=" * 60)
+        logger.info("[LSTM] TRAINING THÀNH CÔNG!")
+        logger.info("=" * 60)
+
+        # Chuẩn bị response
+        response = {
             'success': True,
-            'message': 'Training LSTM thành công!',
+            'model': 'lstm',
+            'message': 'Training LSTM thành công với LSTM Data Pipeline!',
+            'pipeline_info': {
+                'seq_length': seq_length,
+                'num_features': len(feature_names),
+                'feature_names': feature_names,
+                'include_padding': True,
+                'split_method': 'by_user'
+            },
+            'data_info': {
+                'total_transactions': int(metadata['total_transactions']),
+                'total_users': int(metadata['total_users']),
+                'train_users': int(metadata['train_users_count']),
+                'test_users': int(metadata['test_users_count']),
+                'train_sequences': int(metadata['train_sequences_count']),
+                'test_sequences': int(metadata['test_sequences_count']),
+                'train_fraud_ratio': float(metadata['train_fraud_ratio']),
+                'test_fraud_ratio': float(metadata['test_fraud_ratio']),
+            },
             'training_info': {
-                'samples_count': int(len(X)),
-                'features_count': int(len(feature_cols)),
-                'feature_names': list(X.columns)
+                'X_train_shape': list(X_train.shape),
+                'X_test_shape': list(X_test.shape),
+                'train_fraud_count': int(metadata['train_fraud_count']),
+                'test_fraud_count': int(metadata['test_fraud_count']),
             },
             'metrics': metrics,
             'timestamp': datetime.now().isoformat()
-        })
+        }
+
+        return jsonify(response)
 
     except Exception as e:
-        logger.error(f"[LSTM] LỖI: {str(e)}")
+        error_msg = str(e)
+        error_traceback = traceback.format_exc()
+        logger.error(f"[LSTM] LỖI: {error_msg}")
+        logger.error(f"[LSTM] Traceback:\n{error_traceback}")
+
         return jsonify({
             'success': False,
-            'error': f'Training thất bại: {str(e)}'
+            'error': f'Training thất bại: {error_msg}',
+            'details': error_traceback
         }), 500
 
 
