@@ -1393,40 +1393,12 @@ def train_autoencoder():
             model = AutoencoderModel()
             model.fit(X_normal_train, feature_names=feature_names, verbose=True)
 
-            # Bước 4: Tối ưu threshold ưu tiên Recall (giảm bỏ sót gian lận)
-            # Sử dụng logic mới: duyệt percentile 80→98, chọn threshold có Recall ≥ 0.6 và Precision cao nhất
-            if fraud_count > 0:
-                logger.info("[AUTOENCODER] Bắt đầu tối ưu threshold ưu tiên Recall...")
-                logger.info("[AUTOENCODER] Duyệt percentile 80 → 98, chọn threshold có Recall ≥ 0.6")
-
-                # Scale dữ liệu để sử dụng với _optimize_threshold_for_recall
-                X_normal_train_scaled = model.scaler.transform(X_normal_train)
-                X_fraud_scaled = model.scaler.transform(fraud_data)
-
-                # Tối ưu threshold với fraud data
-                optimization_result = model._optimize_threshold_for_recall(
-                    X_normal=X_normal_train_scaled,
-                    X_fraud=X_fraud_scaled,
-                    min_recall=0.6,
-                    percentile_range=(80, 98),
-                    verbose=True
-                )
-
-                threshold = optimization_result['selected_threshold']
-                threshold_percentile = optimization_result['selected_percentile']
-                threshold_comparison = optimization_result['threshold_comparison']
-
-                logger.info(f"[AUTOENCODER] Threshold tối ưu: {threshold:.6f} (Percentile {threshold_percentile})")
-                logger.info(f"[AUTOENCODER] Lý do: {optimization_result['reason']}")
-            else:
-                # Fallback: percentile 95 nếu không có fraud data
-                train_errors = model.get_reconstruction_error(X_normal_train)
-                threshold = float(np.percentile(train_errors, 95))
-                model.threshold = threshold
-                threshold_percentile = 95
-                threshold_comparison = None
-                optimization_result = None
-                logger.info(f"[AUTOENCODER] Threshold (percentile 95 mặc định): {threshold:.6f}")
+            # Bước 4: Tính threshold với percentile 95 (mặc định)
+            train_errors = model.get_reconstruction_error(X_normal_train)
+            threshold = float(np.percentile(train_errors, 95))
+            model.threshold = threshold
+            threshold_percentile = 95
+            logger.info(f"[AUTOENCODER] Threshold (percentile 95): {threshold:.6f}")
 
             # Bước 5: Tạo test set = normal_test + ALL fraud
             if fraud_count > 0:
@@ -1477,8 +1449,6 @@ def train_autoencoder():
                 precision = None
                 recall = None
                 tp, tn, fp, fn = 0, len(X_normal_test), 0, 0
-                threshold_comparison = None
-                optimization_result = None
                 logger.warning("[AUTOENCODER] Không có fraud data để tính metrics đầy đủ")
 
             # Lưu model
@@ -1493,25 +1463,18 @@ def train_autoencoder():
             response = {
                 'success': True,
                 'model': 'autoencoder',
-                'message': 'Autoencoder trained successfully! (Trained with ONLY normal data, threshold optimized for Recall)',
+                'message': 'Autoencoder trained successfully! (Trained with ONLY normal data)',
                 'data_info': {
                     'total_samples': int(len(df)),
                     'normal_samples': int(normal_count),
                     'fraud_samples': int(fraud_count),
                     'train_samples': int(len(X_normal_train)),
                     'test_samples': int(len(X_test)),
-                    'note': 'Model trained ONLY with normal data (is_fraud=0). Threshold optimized to prioritize Recall >= 0.6.'
+                    'note': 'Model trained ONLY with normal data (is_fraud=0). Threshold calculated using percentile 95.'
                 },
                 'training_info': {
                     'threshold': threshold,
                     'threshold_percentile': threshold_percentile,
-                    'threshold_optimization': {
-                        'strategy': 'Recall-priority (min_recall=0.6)',
-                        'percentile_range': '80 -> 98',
-                        'selection_criteria': 'Choose threshold with highest Precision among those meeting Recall requirement',
-                        'reason': optimization_result['reason'] if optimization_result else 'N/A (no fraud data)'
-                    } if fraud_count > 0 else None,
-                    'threshold_comparison': threshold_comparison,
                     'features_count': int(len(feature_names)),
                     'feature_names': feature_names
                 },
@@ -1528,12 +1491,6 @@ def train_autoencoder():
                         'false_positives': int(fp),
                         'false_negatives': int(fn)
                     }
-                },
-                'banking_explanation': {
-                    'why_recall_priority': 'Trong ngân hàng, bỏ sót giao dịch gian lận (False Negative) gây tổn thất tài chính thực sự, nghiêm trọng hơn cảnh báo nhầm (False Positive).',
-                    'false_negative_cost': 'Mất tiền thực, ảnh hưởng uy tín, mất khách hàng, có thể kiện tụng',
-                    'false_positive_cost': 'Chỉ gây bất tiện tạm thời, có thể xác minh qua OTP hoặc gọi điện',
-                    'threshold_balance': f'Threshold được chọn tại percentile {threshold_percentile} cân bằng giữa phát hiện fraud (Recall={recall:.4f}) và giảm cảnh báo nhầm (Precision={precision:.4f})' if fraud_count > 0 else 'N/A'
                 },
                 'timestamp': datetime.now().isoformat()
             }
