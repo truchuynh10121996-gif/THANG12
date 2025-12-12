@@ -25,6 +25,9 @@ const api = axios.create({
   },
 });
 
+// Timeout dài hơn cho các API training (30 phút)
+const TRAINING_TIMEOUT = 1800000;
+
 // Request interceptor - Log các request
 api.interceptors.request.use(
   (config) => {
@@ -165,6 +168,7 @@ export const trainAll = async (params = {}) => {
 export const trainIsolationForest = async (formData) => {
   return api.post('/train/isolation_forest', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: TRAINING_TIMEOUT,
   });
 };
 
@@ -176,6 +180,7 @@ export const trainIsolationForest = async (formData) => {
 export const trainLightGBM = async (formData) => {
   return api.post('/train/lightgbm', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: TRAINING_TIMEOUT,
   });
 };
 
@@ -187,6 +192,7 @@ export const trainLightGBM = async (formData) => {
 export const trainAutoencoder = async (formData) => {
   return api.post('/train/autoencoder', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: TRAINING_TIMEOUT,
   });
 };
 
@@ -198,6 +204,7 @@ export const trainAutoencoder = async (formData) => {
 export const trainLSTM = async (formData) => {
   return api.post('/train/lstm', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: TRAINING_TIMEOUT,
   });
 };
 
@@ -209,6 +216,7 @@ export const trainLSTM = async (formData) => {
 export const trainGNN = async (formData) => {
   return api.post('/train/gnn', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: TRAINING_TIMEOUT,
   });
 };
 
@@ -220,6 +228,7 @@ export const trainGNN = async (formData) => {
 export const trainAllWithData = async (formData) => {
   return api.post('/train/all/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: TRAINING_TIMEOUT,
   });
 };
 
