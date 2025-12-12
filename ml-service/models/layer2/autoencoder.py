@@ -448,16 +448,16 @@ class AutoencoderModel:
             tn = np.sum((y_pred == 0) & (y_true == 0))  # Normal nhận đúng
 
             results.append({
-                'percentile': pct,
-                'threshold': threshold,
-                'precision': precision,
-                'recall': recall,
-                'f1_score': f1,
-                'true_positive': tp,
-                'false_positive': fp,
-                'true_negative': tn,
-                'false_negative': fn,
-                'meets_recall_requirement': recall >= min_recall
+                'percentile': int(pct),
+                'threshold': float(threshold),
+                'precision': float(precision),
+                'recall': float(recall),
+                'f1_score': float(f1),
+                'true_positive': int(tp),
+                'false_positive': int(fp),
+                'true_negative': int(tn),
+                'false_negative': int(fn),
+                'meets_recall_requirement': bool(recall >= min_recall)
             })
 
         # In bảng so sánh
@@ -565,13 +565,13 @@ class AutoencoderModel:
 
         return {
             'selected_threshold': float(self.threshold),
-            'selected_percentile': self.threshold_percentile,
+            'selected_percentile': int(self.threshold_percentile),
             'threshold_comparison': results,
             'reason': reason,
             'best_metrics': {
-                'precision': best_result['precision'],
-                'recall': best_result['recall'],
-                'f1_score': best_result['f1_score']
+                'precision': float(best_result['precision']),
+                'recall': float(best_result['recall']),
+                'f1_score': float(best_result['f1_score'])
             }
         }
 
