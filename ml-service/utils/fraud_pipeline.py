@@ -55,6 +55,15 @@ class FraudDetectionPipeline:
         'gnn': 0.20
     }
 
+    # Rule-based weights khi model chưa train
+    RULE_WEIGHTS = {
+        'amount_deviation': 0.25,      # Độ lệch số tiền
+        'velocity': 0.20,              # Tần suất giao dịch
+        'time_pattern': 0.15,          # Thời gian giao dịch
+        'recipient_risk': 0.20,        # Rủi ro người nhận
+        'account_behavior': 0.20       # Hành vi tài khoản
+    }
+
     def __init__(self):
         self.models = {}
         self.models_loaded = {
@@ -127,6 +136,130 @@ class FraudDetectionPipeline:
 
         loaded_count = sum(self.models_loaded.values())
         logger.info(f"Models loaded: {loaded_count}/5")
+
+    def _calculate_rule_based_score(self, transaction_data: Dict) -> Tuple[float, Dict[str, float]]:
+        """
+        Tính điểm rủi ro dựa trên rules khi model chưa được train
+
+        Phương pháp này phân tích các đặc trưng giao dịch và trả về điểm rủi ro
+        có ý nghĩa thay vì giá trị mặc định 0.5
+
+        Returns:
+            Tuple[float, Dict]: (overall_score, component_scores)
+        """
+        component_scores = {}
+
+        # 1. Amount Deviation Score (0-1)
+        # Số tiền càng lệch khỏi trung bình, điểm rủi ro càng cao
+        amount = transaction_data.get('amount', 0)
+        avg_amount = transaction_data.get('avg_transaction_amount', 0)
+        deviation_ratio = transaction_data.get('amount_deviation_ratio', 1)
+
+        if avg_amount > 0:
+            ratio = amount / avg_amount
+            if ratio >= 5:
+                amount_score = 0.9  # Gấp 5 lần trở lên - rất rủi ro
+            elif ratio >= 3:
+                amount_score = 0.7  # Gấp 3-5 lần
+            elif ratio >= 2:
+                amount_score = 0.5  # Gấp 2-3 lần
+            elif ratio >= 1.5:
+                amount_score = 0.3  # Gấp 1.5-2 lần
+            else:
+                amount_score = 0.1  # Bình thường
+        else:
+            # Không có lịch sử, dùng deviation ratio
+            if deviation_ratio >= 3:
+                amount_score = 0.7
+            elif deviation_ratio >= 2:
+                amount_score = 0.5
+            else:
+                amount_score = 0.2
+        component_scores['amount_deviation'] = amount_score
+
+        # 2. Velocity Score (0-1)
+        # Tần suất giao dịch cao = rủi ro cao
+        velocity_1h = transaction_data.get('velocity_1h', 0)
+        velocity_24h = transaction_data.get('velocity_24h', 0)
+
+        if velocity_1h >= 10:
+            velocity_score = 0.95  # Cực kỳ bất thường
+        elif velocity_1h >= 5:
+            velocity_score = 0.8
+        elif velocity_1h >= 3:
+            velocity_score = 0.6
+        elif velocity_24h >= 30:
+            velocity_score = 0.7
+        elif velocity_24h >= 20:
+            velocity_score = 0.5
+        elif velocity_24h >= 10:
+            velocity_score = 0.3
+        else:
+            velocity_score = 0.1
+        component_scores['velocity'] = velocity_score
+
+        # 3. Time Pattern Score (0-1)
+        # Giao dịch ban đêm, ngoài giờ làm việc = rủi ro cao hơn
+        is_night = transaction_data.get('is_night_transaction', 0)
+        is_business_hours = transaction_data.get('is_during_business_hours', 0)
+        hour = transaction_data.get('hour', 12)
+
+        if is_night:
+            if 2 <= hour <= 5:  # Rạng sáng - rất bất thường
+                time_score = 0.7
+            else:
+                time_score = 0.5
+        elif not is_business_hours:
+            time_score = 0.3
+        else:
+            time_score = 0.1
+        component_scores['time_pattern'] = time_score
+
+        # 4. Recipient Risk Score (0-1)
+        # Người nhận mới, ngân hàng/ví điện tử nhỏ = rủi ro cao
+        is_new_recipient = transaction_data.get('is_new_recipient', 0)
+        recipient_bank_risk = transaction_data.get('recipient_bank_risk', 1)
+        is_unusual_account = transaction_data.get('is_unusual_account', 0)
+
+        recipient_score = 0.1  # Base score
+        if is_new_recipient:
+            recipient_score += 0.3
+        if recipient_bank_risk >= 2:  # Ví điện tử hoặc ngân hàng nhỏ
+            recipient_score += 0.25
+        elif recipient_bank_risk >= 1:
+            recipient_score += 0.1
+        if is_unusual_account:
+            recipient_score += 0.25
+        recipient_score = min(recipient_score, 1.0)
+        component_scores['recipient_risk'] = recipient_score
+
+        # 5. Account Behavior Score (0-1)
+        # Tài khoản mới, thời gian từ giao dịch trước = risk indicators
+        account_age_days = transaction_data.get('account_age_days', 0)
+        time_since_last = transaction_data.get('time_since_last_transaction', 0)
+
+        behavior_score = 0.1
+        if account_age_days < 30:
+            behavior_score += 0.4  # Tài khoản rất mới
+        elif account_age_days < 90:
+            behavior_score += 0.2  # Tài khoản khá mới
+
+        # Giao dịch đột ngột sau thời gian dài không hoạt động
+        if time_since_last > 30 * 24 * 60:  # > 30 ngày (tính theo phút)
+            behavior_score += 0.3
+        elif time_since_last > 7 * 24 * 60:  # > 7 ngày
+            behavior_score += 0.15
+
+        behavior_score = min(behavior_score, 1.0)
+        component_scores['account_behavior'] = behavior_score
+
+        # Tính overall score với weighted average
+        overall_score = sum(
+            score * self.RULE_WEIGHTS[component]
+            for component, score in component_scores.items()
+        )
+
+        return overall_score, component_scores
 
     def _prepare_features(self, transaction_data: Dict) -> np.ndarray:
         """Chuẩn bị features vector từ transaction data"""
@@ -467,6 +600,10 @@ class FraudDetectionPipeline:
         """
         logger.info(f"Analyzing transaction: {transaction_data.get('transaction_id')}")
 
+        # Kiểm tra xem có model nào được load không
+        models_loaded_count = sum(self.models_loaded.values())
+        use_rule_based = models_loaded_count == 0
+
         # Chuẩn bị features
         features = self._prepare_features(transaction_data)
 
@@ -474,33 +611,88 @@ class FraudDetectionPipeline:
         model_results = {}
         model_scores = {}
 
-        # Isolation Forest
-        score, result = self._run_isolation_forest(features)
-        model_results['isolation_forest'] = result
-        model_scores['isolation_forest'] = score
+        if use_rule_based:
+            # Sử dụng Rule-Based Scoring khi chưa train model
+            logger.info("No ML models loaded. Using rule-based scoring...")
+            rule_score, component_scores = self._calculate_rule_based_score(transaction_data)
 
-        # LightGBM
-        score, result = self._run_lightgbm(features)
-        model_results['lightgbm'] = result
-        model_scores['lightgbm'] = score
+            # Tạo kết quả cho từng "model" ảo dựa trên rule components
+            model_scores = {
+                'isolation_forest': component_scores.get('amount_deviation', 0.5),
+                'lightgbm': component_scores.get('account_behavior', 0.5),
+                'autoencoder': component_scores.get('velocity', 0.5),
+                'lstm': component_scores.get('time_pattern', 0.5),
+                'gnn': component_scores.get('recipient_risk', 0.5)
+            }
 
-        # Autoencoder
-        score, result = self._run_autoencoder(features)
-        model_results['autoencoder'] = result
-        model_scores['autoencoder'] = score
+            model_results = {
+                'isolation_forest': {
+                    'loaded': False,
+                    'mode': 'rule_based',
+                    'component': 'amount_deviation',
+                    'fraud_probability': component_scores.get('amount_deviation', 0.5),
+                    'description': 'Phân tích độ lệch số tiền (Rule-Based)'
+                },
+                'lightgbm': {
+                    'loaded': False,
+                    'mode': 'rule_based',
+                    'component': 'account_behavior',
+                    'fraud_probability': component_scores.get('account_behavior', 0.5),
+                    'description': 'Phân tích hành vi tài khoản (Rule-Based)'
+                },
+                'autoencoder': {
+                    'loaded': False,
+                    'mode': 'rule_based',
+                    'component': 'velocity',
+                    'fraud_probability': component_scores.get('velocity', 0.5),
+                    'description': 'Phân tích tần suất giao dịch (Rule-Based)'
+                },
+                'lstm': {
+                    'loaded': False,
+                    'mode': 'rule_based',
+                    'component': 'time_pattern',
+                    'fraud_probability': component_scores.get('time_pattern', 0.5),
+                    'description': 'Phân tích thời gian giao dịch (Rule-Based)'
+                },
+                'gnn': {
+                    'loaded': False,
+                    'mode': 'rule_based',
+                    'component': 'recipient_risk',
+                    'fraud_probability': component_scores.get('recipient_risk', 0.5),
+                    'description': 'Phân tích rủi ro người nhận (Rule-Based)'
+                }
+            }
 
-        # LSTM
-        score, result = self._run_lstm(transaction_data, features)
-        model_results['lstm'] = result
-        model_scores['lstm'] = score
+            fraud_probability = rule_score
+        else:
+            # Sử dụng ML Models
+            # Isolation Forest
+            score, result = self._run_isolation_forest(features)
+            model_results['isolation_forest'] = result
+            model_scores['isolation_forest'] = score
 
-        # GNN
-        score, result = self._run_gnn(transaction_data)
-        model_results['gnn'] = result
-        model_scores['gnn'] = score
+            # LightGBM
+            score, result = self._run_lightgbm(features)
+            model_results['lightgbm'] = result
+            model_scores['lightgbm'] = score
 
-        # Ensemble
-        fraud_probability = self._ensemble_predictions(model_scores)
+            # Autoencoder
+            score, result = self._run_autoencoder(features)
+            model_results['autoencoder'] = result
+            model_scores['autoencoder'] = score
+
+            # LSTM
+            score, result = self._run_lstm(transaction_data, features)
+            model_results['lstm'] = result
+            model_scores['lstm'] = score
+
+            # GNN
+            score, result = self._run_gnn(transaction_data)
+            model_results['gnn'] = result
+            model_scores['gnn'] = score
+
+            # Ensemble
+            fraud_probability = self._ensemble_predictions(model_scores)
 
         # Xác định risk level
         risk_level = self._determine_risk_level(fraud_probability)
@@ -516,10 +708,15 @@ class FraudDetectionPipeline:
         # Tạo giải thích
         explanation = self._generate_explanation(transaction_data, model_results, risk_level)
 
+        # Thêm thông tin về mode đang sử dụng
+        analysis_mode = 'rule_based' if use_rule_based else 'ml_models'
+
         return {
             'transaction_id': transaction_data.get('transaction_id'),
             'user_id': transaction_data.get('user_id'),
             'amount': transaction_data.get('amount'),
+            'analysis_mode': analysis_mode,
+            'models_loaded_count': models_loaded_count,
             'prediction': {
                 'fraud_probability': round(fraud_probability, 4),
                 'prediction': prediction,

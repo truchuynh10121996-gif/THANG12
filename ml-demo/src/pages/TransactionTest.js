@@ -835,9 +835,26 @@ function TransactionTest() {
                   <Typography variant="h6" sx={{ fontWeight: 700, color: '#FF6B99' }}>
                     Kết quả từ 5 Models
                   </Typography>
+                  {/* Analysis Mode Badge */}
+                  <Chip
+                    label={analysisResult.analysis_mode === 'rule_based' ? 'Rule-Based' : 'ML Models'}
+                    size="small"
+                    color={analysisResult.analysis_mode === 'rule_based' ? 'warning' : 'success'}
+                    sx={{ ml: 1 }}
+                  />
                 </Box>
                 {expandModelDetails ? <ExpandLessIcon /> : <ExpandMoreIcon />}
               </Box>
+
+              {/* Analysis mode notice */}
+              {analysisResult.analysis_mode === 'rule_based' && (
+                <Alert severity="info" sx={{ mt: 2 }}>
+                  <strong>Chế độ Rule-Based:</strong> Các model ML chưa được huấn luyện.
+                  Hệ thống đang sử dụng quy tắc phân tích dựa trên đặc trưng giao dịch
+                  (số tiền, tần suất, thời gian, người nhận, hành vi tài khoản) để đánh giá rủi ro.
+                  Để sử dụng ML models, vui lòng huấn luyện các model trước.
+                </Alert>
+              )}
 
               {/* Quick view of model scores */}
               <Grid container spacing={1} sx={{ mt: 2 }}>
@@ -857,9 +874,21 @@ function TransactionTest() {
                         {(score * 100).toFixed(0)}%
                       </Typography>
                       <Chip
-                        label={analysisResult.models_status?.[model] ? 'Loaded' : 'N/A'}
+                        label={
+                          analysisResult.models_status?.[model]
+                            ? 'ML Model'
+                            : analysisResult.analysis_mode === 'rule_based'
+                              ? 'Rule'
+                              : 'N/A'
+                        }
                         size="small"
-                        color={analysisResult.models_status?.[model] ? 'success' : 'default'}
+                        color={
+                          analysisResult.models_status?.[model]
+                            ? 'success'
+                            : analysisResult.analysis_mode === 'rule_based'
+                              ? 'warning'
+                              : 'default'
+                        }
                         sx={{ mt: 0.5 }}
                       />
                     </Box>
@@ -892,6 +921,19 @@ function TransactionTest() {
                                 Reconstruction Error: {details.reconstruction_error.toFixed(4)}
                               </Typography>
                             )}
+                          </>
+                        ) : details.mode === 'rule_based' ? (
+                          <>
+                            <Chip label="Rule-Based" size="small" color="warning" sx={{ mb: 1 }} />
+                            <Typography variant="body2" color="text.secondary">
+                              {details.description}
+                            </Typography>
+                            <Typography variant="body2" sx={{ mt: 0.5, fontWeight: 500 }}>
+                              Component: {details.component?.replace('_', ' ')}
+                            </Typography>
+                            <Typography variant="body2">
+                              Score: {((details.fraud_probability || 0) * 100).toFixed(0)}%
+                            </Typography>
                           </>
                         ) : (
                           <Typography variant="body2" color="text.secondary">
