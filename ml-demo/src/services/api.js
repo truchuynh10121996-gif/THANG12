@@ -89,6 +89,52 @@ export const createUser = async (userData) => {
   return api.post('/users', userData);
 };
 
+// ============ DEMO CUSTOMER APIs (TỪ FILE EXCEL) ============
+
+/**
+ * Lấy danh sách 3 khách hàng demo từ file Excel
+ * @returns {Promise} - Danh sách khách hàng demo
+ */
+export const getDemoCustomers = async () => {
+  return api.get('/demo/customers');
+};
+
+/**
+ * Lấy chi tiết khách hàng demo
+ * @param {string} userId - ID của user (VD: USR_000001)
+ * @returns {Promise} - Thông tin chi tiết khách hàng
+ */
+export const getDemoCustomerDetail = async (userId) => {
+  return api.get(`/demo/customers/${userId}`);
+};
+
+/**
+ * Lấy lịch sử giao dịch của khách hàng demo
+ * @param {string} userId - ID của user
+ * @param {number} limit - Số giao dịch tối đa (mặc định 15)
+ * @returns {Promise} - Danh sách giao dịch
+ */
+export const getDemoCustomerTransactions = async (userId, limit = 15) => {
+  return api.get(`/demo/customers/${userId}/transactions`, { params: { limit } });
+};
+
+/**
+ * Phân tích giao dịch với 5 ML models
+ * @param {object} transactionData - Dữ liệu giao dịch
+ * @returns {Promise} - Kết quả phân tích chi tiết
+ */
+export const analyzeDemoTransaction = async (transactionData) => {
+  return api.post('/demo/analyze', transactionData);
+};
+
+/**
+ * Kiểm tra trạng thái các models
+ * @returns {Promise} - Trạng thái các models
+ */
+export const getDemoModelsStatus = async () => {
+  return api.get('/demo/models/status');
+};
+
 // ============ TRANSACTION APIs (MỚI) ============
 
 /**

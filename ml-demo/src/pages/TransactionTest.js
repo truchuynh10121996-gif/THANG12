@@ -1,20 +1,20 @@
 /**
- * TransactionTest Page - Kiểm tra giao dịch đơn lẻ
- * ==================================================
+ * TransactionTest Page - Kiểm tra giao dịch với dữ liệu khách hàng thực
+ * =====================================================================
  * Trang này cho phép:
- * 1. Chọn khách hàng từ danh sách có sẵn
+ * 1. Chọn khách hàng từ 3 file Excel (USR_000001, USR_000002, USR_000003)
  * 2. Xem thông tin profile và lịch sử giao dịch của khách hàng
  * 3. Nhập thông tin giao dịch mới
- * 4. Phân tích giao dịch với ML models
- * 5. Xem kết quả và giải thích chi tiết
+ * 4. Phân tích giao dịch với 5 ML models (Isolation Forest, LightGBM, Autoencoder, LSTM, GNN)
+ * 5. Xem kết quả phân tích và giải thích chi tiết
  *
  * Flow hoạt động:
- * - Người dùng chọn user_id từ dropdown
- * - Frontend gọi API lấy profile + lịch sử giao dịch
- * - Hiển thị thông tin user và lịch sử cho người dùng xem
+ * - Người dùng chọn user_id từ dropdown (3 users cố định)
+ * - Frontend gọi API lấy profile + lịch sử giao dịch từ file Excel
+ * - Hiển thị thông tin user và 15 giao dịch gần nhất
  * - Người dùng nhập thông tin giao dịch mới
- * - Khi nhấn "Phân tích", gửi request đến ML Service
- * - ML Service tính toán features và trả về kết quả
+ * - Khi nhấn "Phân tích giao dịch", gửi đến pipeline 5 models
+ * - Hiển thị kết quả với màu sắc tương ứng mức độ rủi ro
  */
 
 import React, { useState, useEffect } from 'react';
@@ -38,7 +38,6 @@ import {
   ListItem,
   ListItemIcon,
   ListItemText,
-  Autocomplete,
   Paper,
   Table,
   TableBody,
@@ -49,6 +48,8 @@ import {
   Skeleton,
   Tooltip,
   IconButton,
+  LinearProgress,
+  Collapse,
 } from '@mui/material';
 import {
   Send as SendIcon,
@@ -62,119 +63,111 @@ import {
   AccountBalance as AccountIcon,
   Speed as SpeedIcon,
   Refresh as RefreshIcon,
+  ExpandMore as ExpandMoreIcon,
+  ExpandLess as ExpandLessIcon,
+  Security as SecurityIcon,
+  Analytics as AnalyticsIcon,
 } from '@mui/icons-material';
 import { riskColors, gradients } from '../styles/theme';
 import {
-  getUsers,
-  getUserDetail,
-  getUserTransactions,
-  predictSingle,
-  explainPrediction,
+  getDemoCustomers,
+  getDemoCustomerDetail,
+  getDemoCustomerTransactions,
+  analyzeDemoTransaction,
   formatCurrency,
-  formatDateTime,
-  getTransactionTypeLabel,
-  getIncomeLevelLabel,
-  getRiskLabel,
   getRiskColor,
 } from '../services/api';
 
 function TransactionTest() {
   // ===== STATE MANAGEMENT =====
 
-  // Danh sách users và user được chọn
-  const [users, setUsers] = useState([]);
-  const [selectedUser, setSelectedUser] = useState(null);
-  const [userProfile, setUserProfile] = useState(null);
-  const [userTransactions, setUserTransactions] = useState([]);
+  // Danh sách customers và customer được chọn
+  const [customers, setCustomers] = useState([]);
+  const [selectedCustomer, setSelectedCustomer] = useState('');
+  const [customerProfile, setCustomerProfile] = useState(null);
+  const [customerTransactions, setCustomerTransactions] = useState([]);
   const [behavioralFeatures, setBehavioralFeatures] = useState(null);
 
   // Loading states
-  const [loadingUsers, setLoadingUsers] = useState(true);
-  const [loadingUserData, setLoadingUserData] = useState(false);
+  const [loadingCustomers, setLoadingCustomers] = useState(true);
+  const [loadingCustomerData, setLoadingCustomerData] = useState(false);
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
 
   // Form data cho giao dịch mới
   const [formData, setFormData] = useState({
-    transaction_id: `TXN_${Date.now()}`,
     amount: 5000000,
     transaction_type: 'transfer',
     channel: 'mobile_app',
-    device_type: 'android',
     hour: new Date().getHours(),
-    is_international: false,
     recipient_id: '',
+    is_international: false,
   });
 
   // Kết quả phân tích
-  const [result, setResult] = useState(null);
-  const [explanation, setExplanation] = useState(null);
+  const [analysisResult, setAnalysisResult] = useState(null);
   const [error, setError] = useState(null);
 
-  // ===== LOAD USERS ON MOUNT =====
+  // Expand model details
+  const [expandModelDetails, setExpandModelDetails] = useState(false);
+
+  // ===== LOAD CUSTOMERS ON MOUNT =====
 
   useEffect(() => {
-    loadUsers();
+    loadCustomers();
   }, []);
 
   // ===== API CALLS =====
 
   /**
-   * Tải danh sách users
+   * Tải danh sách 3 khách hàng demo
    */
-  const loadUsers = async () => {
+  const loadCustomers = async () => {
     try {
-      setLoadingUsers(true);
-      const response = await getUsers(100);
-      setUsers(response.users || []);
+      setLoadingCustomers(true);
+      const response = await getDemoCustomers();
+      setCustomers(response.customers || []);
     } catch (err) {
-      console.error('Lỗi tải danh sách users:', err);
-      setError('Không thể tải danh sách khách hàng');
+      console.error('Lỗi tải danh sách khách hàng:', err);
+      setError('Không thể tải danh sách khách hàng. Vui lòng kiểm tra kết nối ML Service.');
     } finally {
-      setLoadingUsers(false);
+      setLoadingCustomers(false);
     }
   };
 
   /**
-   * Khi chọn user, load profile và lịch sử giao dịch
+   * Khi chọn customer, load profile và lịch sử giao dịch
    */
-  const handleUserSelect = async (event, user) => {
-    setSelectedUser(user);
-    setResult(null);
-    setExplanation(null);
+  const handleCustomerSelect = async (event) => {
+    const userId = event.target.value;
+    setSelectedCustomer(userId);
+    setAnalysisResult(null);
+    setError(null);
 
-    if (!user) {
-      setUserProfile(null);
-      setUserTransactions([]);
+    if (!userId) {
+      setCustomerProfile(null);
+      setCustomerTransactions([]);
       setBehavioralFeatures(null);
       return;
     }
 
     try {
-      setLoadingUserData(true);
-      setError(null);
+      setLoadingCustomerData(true);
 
       // Gọi đồng thời cả 2 API
       const [detailRes, txRes] = await Promise.all([
-        getUserDetail(user.user_id),
-        getUserTransactions(user.user_id, 10),
+        getDemoCustomerDetail(userId),
+        getDemoCustomerTransactions(userId, 15),
       ]);
 
-      setUserProfile(detailRes.profile);
+      setCustomerProfile(detailRes.profile);
       setBehavioralFeatures(detailRes.behavioral_features);
-      setUserTransactions(txRes.transactions || []);
-
-      // Cập nhật form với user_id
-      setFormData(prev => ({
-        ...prev,
-        user_id: user.user_id,
-        transaction_id: `TXN_${user.user_id}_${Date.now()}`,
-      }));
+      setCustomerTransactions(txRes.transactions || []);
 
     } catch (err) {
-      console.error('Lỗi tải thông tin user:', err);
+      console.error('Lỗi tải thông tin khách hàng:', err);
       setError('Không thể tải thông tin khách hàng');
     } finally {
-      setLoadingUserData(false);
+      setLoadingCustomerData(false);
     }
   };
 
@@ -192,8 +185,8 @@ function TransactionTest() {
   /**
    * Submit phân tích giao dịch
    */
-  const handleSubmit = async () => {
-    if (!selectedUser) {
+  const handleAnalyze = async () => {
+    if (!selectedCustomer) {
       setError('Vui lòng chọn khách hàng trước');
       return;
     }
@@ -205,47 +198,36 @@ function TransactionTest() {
       // Chuẩn bị dữ liệu giao dịch
       const transactionData = {
         ...formData,
-        user_id: selectedUser.user_id,
+        user_id: selectedCustomer,
+        transaction_id: `TX_${selectedCustomer}_${Date.now()}`,
       };
 
-      // Gọi API prediction và explanation
-      const [predRes, explainRes] = await Promise.all([
-        predictSingle(transactionData),
-        explainPrediction(transactionData),
-      ]);
-
-      setResult(predRes.prediction);
+      // Gọi API phân tích
+      const response = await analyzeDemoTransaction(transactionData);
+      setAnalysisResult(response.result);
 
       // Cập nhật behavioral features từ response
-      if (predRes.behavioral_features) {
-        setBehavioralFeatures(predRes.behavioral_features);
+      if (response.result?.behavioral_features) {
+        setBehavioralFeatures(response.result.behavioral_features);
       }
-
-      setExplanation(explainRes.explanation);
 
     } catch (err) {
       console.error('Lỗi phân tích giao dịch:', err);
-      setError('Không thể kết nối đến ML Service. Đang hiển thị kết quả mẫu...');
-
-      // Kết quả mẫu khi không kết nối được
-      setResult({
-        fraud_probability: 0.75,
-        prediction: 'fraud',
-        risk_level: 'high',
-        should_block: true,
-        confidence: 0.50,
-      });
-      setExplanation({
-        summary: 'Giao dịch có 2 yếu tố rủi ro: Số tiền lớn, Chuyển khoản',
-        risk_factors: [
-          { factor: 'Số tiền lớn so với trung bình', importance: 'high' },
-          { factor: 'Loại giao dịch chuyển khoản', importance: 'medium' },
-        ],
-        recommendations: ['Xác nhận OTP', 'Ghi nhận cảnh báo'],
-      });
+      setError('Không thể kết nối đến ML Service. Vui lòng đảm bảo service đang chạy.');
     } finally {
       setLoadingAnalysis(false);
     }
+  };
+
+  /**
+   * Format số tiền VND
+   */
+  const formatMoney = (amount) => {
+    if (!amount && amount !== 0) return 'N/A';
+    return new Intl.NumberFormat('vi-VN', {
+      style: 'currency',
+      currency: 'VND'
+    }).format(amount);
   };
 
   /**
@@ -254,14 +236,43 @@ function TransactionTest() {
   const getRiskIcon = (level) => {
     switch (level) {
       case 'critical':
-        return <ErrorIcon sx={{ color: riskColors.critical }} />;
+        return <ErrorIcon sx={{ color: riskColors.critical, fontSize: 32 }} />;
       case 'high':
-        return <WarningIcon sx={{ color: riskColors.high }} />;
+        return <WarningIcon sx={{ color: riskColors.high, fontSize: 32 }} />;
       case 'medium':
-        return <InfoIcon sx={{ color: riskColors.medium }} />;
+        return <InfoIcon sx={{ color: riskColors.medium, fontSize: 32 }} />;
       default:
-        return <CheckIcon sx={{ color: riskColors.low }} />;
+        return <CheckIcon sx={{ color: riskColors.low, fontSize: 32 }} />;
     }
+  };
+
+  /**
+   * Lấy màu theo risk level
+   */
+  const getRiskBgColor = (level) => {
+    switch (level) {
+      case 'critical':
+        return 'linear-gradient(135deg, #7B1FA2 0%, #9C27B0 100%)';
+      case 'high':
+        return 'linear-gradient(135deg, #D32F2F 0%, #F44336 100%)';
+      case 'medium':
+        return 'linear-gradient(135deg, #ED6C02 0%, #FF9800 100%)';
+      default:
+        return 'linear-gradient(135deg, #2E7D32 0%, #4CAF50 100%)';
+    }
+  };
+
+  /**
+   * Lấy label tiếng Việt cho risk level
+   */
+  const getRiskLabel = (level) => {
+    const labels = {
+      low: 'An toàn',
+      medium: 'Cần xác minh',
+      high: 'Nghi ngờ cao',
+      critical: 'Rủi ro nghiêm trọng'
+    };
+    return labels[level] || level;
   };
 
   // ===== RENDER COMPONENTS =====
@@ -269,7 +280,7 @@ function TransactionTest() {
   /**
    * Render phần chọn khách hàng
    */
-  const renderUserSelector = () => (
+  const renderCustomerSelector = () => (
     <Card sx={{ mb: 3, background: gradients.cardPink, color: '#fff' }}>
       <CardContent>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
@@ -279,45 +290,50 @@ function TransactionTest() {
           </Typography>
         </Box>
 
-        <Autocomplete
-          options={users}
-          getOptionLabel={(option) => `${option.user_id} - ${option.name}`}
-          value={selectedUser}
-          onChange={handleUserSelect}
-          loading={loadingUsers}
-          renderInput={(params) => (
-            <TextField
-              {...params}
-              placeholder="Tìm kiếm theo ID hoặc tên..."
-              sx={{
-                backgroundColor: 'rgba(255,255,255,0.95)',
-                borderRadius: 2,
-                '& .MuiOutlinedInput-root': {
-                  '& fieldset': { border: 'none' },
-                },
-              }}
-              InputProps={{
-                ...params.InputProps,
-                endAdornment: (
-                  <>
-                    {loadingUsers ? <CircularProgress color="inherit" size={20} /> : null}
-                    {params.InputProps.endAdornment}
-                  </>
-                ),
-              }}
-            />
-          )}
-          renderOption={(props, option) => (
-            <Box component="li" {...props} key={option.user_id}>
-              <Box>
-                <Typography sx={{ fontWeight: 600 }}>{option.name}</Typography>
-                <Typography variant="caption" color="text.secondary">
-                  {option.user_id} • {option.occupation} • KYC: {option.kyc_level}
-                </Typography>
-              </Box>
-            </Box>
-          )}
-        />
+        <FormControl fullWidth>
+          <Select
+            value={selectedCustomer}
+            onChange={handleCustomerSelect}
+            displayEmpty
+            sx={{
+              backgroundColor: 'rgba(255,255,255,0.95)',
+              borderRadius: 2,
+              '& .MuiOutlinedInput-notchedOutline': { border: 'none' },
+            }}
+          >
+            <MenuItem value="" disabled>
+              -- Chọn một khách hàng --
+            </MenuItem>
+            {loadingCustomers ? (
+              <MenuItem disabled>
+                <CircularProgress size={20} sx={{ mr: 2 }} />
+                Đang tải...
+              </MenuItem>
+            ) : (
+              customers.map((customer) => (
+                <MenuItem key={customer.user_id} value={customer.user_id}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <PersonIcon sx={{ color: '#FF6B99' }} />
+                    <Box>
+                      <Typography sx={{ fontWeight: 600 }}>
+                        {customer.ho_ten}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {customer.user_id} • {customer.nghe_nghiep} • {customer.total_transactions} giao dịch
+                      </Typography>
+                    </Box>
+                  </Box>
+                </MenuItem>
+              ))
+            )}
+          </Select>
+        </FormControl>
+
+        {customers.length > 0 && (
+          <Typography variant="caption" sx={{ display: 'block', mt: 1, opacity: 0.9 }}>
+            Dữ liệu từ 3 file Excel: USR_000001, USR_000002, USR_000003
+          </Typography>
+        )}
       </CardContent>
     </Card>
   );
@@ -325,21 +341,21 @@ function TransactionTest() {
   /**
    * Render thông tin profile khách hàng
    */
-  const renderUserProfile = () => {
-    if (!selectedUser) return null;
+  const renderCustomerProfile = () => {
+    if (!selectedCustomer) return null;
 
-    if (loadingUserData) {
+    if (loadingCustomerData) {
       return (
         <Card sx={{ mb: 3 }}>
           <CardContent>
             <Skeleton variant="text" width="60%" />
-            <Skeleton variant="rectangular" height={100} sx={{ mt: 2 }} />
+            <Skeleton variant="rectangular" height={150} sx={{ mt: 2 }} />
           </CardContent>
         </Card>
       );
     }
 
-    if (!userProfile) return null;
+    if (!customerProfile) return null;
 
     return (
       <Card sx={{ mb: 3 }}>
@@ -355,20 +371,20 @@ function TransactionTest() {
             {/* Thông tin cơ bản */}
             <Grid item xs={6} md={3}>
               <Typography variant="caption" color="text.secondary">Họ tên</Typography>
-              <Typography sx={{ fontWeight: 600 }}>{userProfile.name}</Typography>
+              <Typography sx={{ fontWeight: 600 }}>{customerProfile.ho_ten}</Typography>
             </Grid>
             <Grid item xs={6} md={3}>
               <Typography variant="caption" color="text.secondary">Tuổi</Typography>
-              <Typography sx={{ fontWeight: 600 }}>{userProfile.age} tuổi</Typography>
+              <Typography sx={{ fontWeight: 600 }}>{customerProfile.tuoi} tuổi</Typography>
             </Grid>
             <Grid item xs={6} md={3}>
               <Typography variant="caption" color="text.secondary">Nghề nghiệp</Typography>
-              <Typography sx={{ fontWeight: 600 }}>{userProfile.occupation}</Typography>
+              <Typography sx={{ fontWeight: 600 }}>{customerProfile.nghe_nghiep}</Typography>
             </Grid>
             <Grid item xs={6} md={3}>
               <Typography variant="caption" color="text.secondary">Mức thu nhập</Typography>
               <Typography sx={{ fontWeight: 600 }}>
-                {getIncomeLevelLabel(userProfile.income_level)}
+                {formatMoney(customerProfile.thu_nhap_hang_thang)}/tháng
               </Typography>
             </Grid>
 
@@ -379,35 +395,23 @@ function TransactionTest() {
             {/* Thông tin tài khoản */}
             <Grid item xs={6} md={3}>
               <Typography variant="caption" color="text.secondary">Số ngày sử dụng</Typography>
-              <Typography sx={{ fontWeight: 600 }}>{userProfile.account_age_days} ngày</Typography>
+              <Typography sx={{ fontWeight: 600 }}>{customerProfile.so_ngay_mo_tai_khoan} ngày</Typography>
             </Grid>
             <Grid item xs={6} md={3}>
-              <Typography variant="caption" color="text.secondary">Cấp độ KYC</Typography>
-              <Chip
-                label={`KYC ${userProfile.kyc_level}`}
-                size="small"
-                color={userProfile.kyc_level >= 3 ? 'success' : userProfile.kyc_level === 2 ? 'warning' : 'default'}
-              />
+              <Typography variant="caption" color="text.secondary">Ngân hàng</Typography>
+              <Typography sx={{ fontWeight: 600 }}>{customerProfile.ngan_hang}</Typography>
             </Grid>
             <Grid item xs={6} md={3}>
               <Typography variant="caption" color="text.secondary">GD trung bình</Typography>
               <Typography sx={{ fontWeight: 600 }}>
-                {formatCurrency(userProfile.avg_transaction_amount)}
+                {formatMoney(customerProfile.avg_transaction_amount)}
               </Typography>
             </Grid>
             <Grid item xs={6} md={3}>
-              <Typography variant="caption" color="text.secondary">Điểm rủi ro lịch sử</Typography>
-              <Chip
-                label={`${(userProfile.historical_risk_score * 100).toFixed(0)}%`}
-                size="small"
-                sx={{
-                  backgroundColor: getRiskColor(
-                    userProfile.historical_risk_score > 0.6 ? 'high' :
-                    userProfile.historical_risk_score > 0.3 ? 'medium' : 'low'
-                  ),
-                  color: '#fff',
-                }}
-              />
+              <Typography variant="caption" color="text.secondary">Thiết bị</Typography>
+              <Typography sx={{ fontWeight: 600 }}>
+                {customerProfile.loai_thiet_bi}
+              </Typography>
             </Grid>
           </Grid>
 
@@ -454,9 +458,9 @@ function TransactionTest() {
    * Render lịch sử giao dịch
    */
   const renderTransactionHistory = () => {
-    if (!selectedUser) return null;
+    if (!selectedCustomer) return null;
 
-    if (loadingUserData) {
+    if (loadingCustomerData) {
       return (
         <Card sx={{ mb: 3 }}>
           <CardContent>
@@ -474,46 +478,56 @@ function TransactionTest() {
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <HistoryIcon sx={{ color: '#FF6B99' }} />
               <Typography variant="h6" sx={{ fontWeight: 700, color: '#FF6B99' }}>
-                Lịch sử giao dịch gần đây
+                Lịch sử giao dịch gần đây (15 GD)
               </Typography>
             </Box>
             <Tooltip title="Tải lại">
-              <IconButton size="small" onClick={() => handleUserSelect(null, selectedUser)}>
+              <IconButton size="small" onClick={() => handleCustomerSelect({ target: { value: selectedCustomer } })}>
                 <RefreshIcon />
               </IconButton>
             </Tooltip>
           </Box>
 
-          {userTransactions.length === 0 ? (
+          {customerTransactions.length === 0 ? (
             <Alert severity="info">Chưa có lịch sử giao dịch</Alert>
           ) : (
-            <TableContainer component={Paper} sx={{ maxHeight: 300 }}>
+            <TableContainer component={Paper} sx={{ maxHeight: 350 }}>
               <Table size="small" stickyHeader>
                 <TableHead>
                   <TableRow>
-                    <TableCell sx={{ fontWeight: 600 }}>Thời gian</TableCell>
-                    <TableCell sx={{ fontWeight: 600 }}>Số tiền</TableCell>
+                    <TableCell sx={{ fontWeight: 600 }}>Ngày</TableCell>
+                    <TableCell sx={{ fontWeight: 600 }}>Giờ</TableCell>
                     <TableCell sx={{ fontWeight: 600 }}>Loại GD</TableCell>
+                    <TableCell sx={{ fontWeight: 600 }} align="right">Số tiền</TableCell>
                     <TableCell sx={{ fontWeight: 600 }}>Người nhận</TableCell>
+                    <TableCell sx={{ fontWeight: 600 }}>Kênh</TableCell>
                     <TableCell sx={{ fontWeight: 600 }}>Trạng thái</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {userTransactions.map((tx, idx) => (
+                  {customerTransactions.map((tx, idx) => (
                     <TableRow key={tx.transaction_id || idx} hover>
-                      <TableCell>{formatDateTime(tx.timestamp)}</TableCell>
-                      <TableCell sx={{ fontWeight: 500 }}>
-                        {formatCurrency(tx.amount)}
-                      </TableCell>
-                      <TableCell>{getTransactionTypeLabel(tx.transaction_type)}</TableCell>
-                      <TableCell>{tx.recipient_id || 'N/A'}</TableCell>
+                      <TableCell>{tx.ngay_giao_dich}</TableCell>
+                      <TableCell>{tx.gio_giao_dich}</TableCell>
                       <TableCell>
                         <Chip
-                          label={tx.status === 'completed' ? 'Hoàn thành' :
-                                 tx.status === 'pending' ? 'Đang xử lý' : 'Thất bại'}
+                          label={tx.loai_giao_dich}
                           size="small"
-                          color={tx.status === 'completed' ? 'success' :
-                                 tx.status === 'pending' ? 'warning' : 'error'}
+                          sx={{ fontSize: '0.7rem' }}
+                        />
+                      </TableCell>
+                      <TableCell align="right" sx={{ fontWeight: 500, color: '#D32F2F' }}>
+                        {formatMoney(tx.so_tien)}
+                      </TableCell>
+                      <TableCell sx={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {tx.ten_nguoi_nhan || 'N/A'}
+                      </TableCell>
+                      <TableCell>{tx.channel}</TableCell>
+                      <TableCell>
+                        <Chip
+                          label={tx.trang_thai}
+                          size="small"
+                          color={tx.trang_thai === 'Thanh cong' ? 'success' : 'default'}
                         />
                       </TableCell>
                     </TableRow>
@@ -538,27 +552,6 @@ function TransactionTest() {
         </Typography>
 
         <Grid container spacing={2}>
-          <Grid item xs={6}>
-            <TextField
-              fullWidth
-              label="Transaction ID"
-              name="transaction_id"
-              value={formData.transaction_id}
-              onChange={handleChange}
-              size="small"
-              disabled
-            />
-          </Grid>
-          <Grid item xs={6}>
-            <TextField
-              fullWidth
-              label="User ID"
-              value={selectedUser?.user_id || ''}
-              size="small"
-              disabled
-            />
-          </Grid>
-
           <Grid item xs={12}>
             <TextField
               fullWidth
@@ -568,7 +561,10 @@ function TransactionTest() {
               value={formData.amount}
               onChange={handleChange}
               size="small"
-              helperText={`Trung bình của user: ${formatCurrency(userProfile?.avg_transaction_amount || 0)}`}
+              helperText={customerProfile ? `Trung bình của user: ${formatMoney(customerProfile.avg_transaction_amount)}` : ''}
+              InputProps={{
+                inputProps: { min: 0 }
+              }}
             />
           </Grid>
 
@@ -632,23 +628,7 @@ function TransactionTest() {
             />
           </Grid>
 
-          <Grid item xs={6}>
-            <FormControl fullWidth size="small">
-              <InputLabel>Loại thiết bị</InputLabel>
-              <Select
-                name="device_type"
-                value={formData.device_type}
-                onChange={handleChange}
-                label="Loại thiết bị"
-              >
-                <MenuItem value="android">Android</MenuItem>
-                <MenuItem value="ios">iOS</MenuItem>
-                <MenuItem value="web">Web Browser</MenuItem>
-              </Select>
-            </FormControl>
-          </Grid>
-
-          <Grid item xs={6}>
+          <Grid item xs={12}>
             <FormControl fullWidth size="small">
               <InputLabel>Giao dịch quốc tế</InputLabel>
               <Select
@@ -667,20 +647,32 @@ function TransactionTest() {
         <Button
           fullWidth
           variant="contained"
-          startIcon={loadingAnalysis ? <CircularProgress size={20} /> : <SendIcon />}
-          onClick={handleSubmit}
-          disabled={loadingAnalysis || !selectedUser}
+          startIcon={loadingAnalysis ? <CircularProgress size={20} color="inherit" /> : <AnalyticsIcon />}
+          onClick={handleAnalyze}
+          disabled={loadingAnalysis || !selectedCustomer}
           sx={{
             mt: 3,
+            py: 1.5,
             background: gradients.cardPink,
+            fontSize: '1rem',
+            fontWeight: 600,
             '&:hover': {
               background: gradients.cardPink,
               opacity: 0.9,
             },
           }}
         >
-          {loadingAnalysis ? 'Đang phân tích...' : 'Phân tích giao dịch'}
+          {loadingAnalysis ? 'Đang phân tích với 5 models...' : 'Phân tích giao dịch'}
         </Button>
+
+        {loadingAnalysis && (
+          <Box sx={{ mt: 2 }}>
+            <LinearProgress color="secondary" />
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1, textAlign: 'center' }}>
+              Đang chạy: Isolation Forest → LightGBM → Autoencoder → LSTM → GNN
+            </Typography>
+          </Box>
+        )}
       </CardContent>
     </Card>
   );
@@ -688,133 +680,251 @@ function TransactionTest() {
   /**
    * Render kết quả phân tích
    */
-  const renderResults = () => (
+  const renderAnalysisResults = () => (
     <>
       {error && (
-        <Alert severity="warning" sx={{ mb: 2 }}>
+        <Alert severity="error" sx={{ mb: 2 }}>
           {error}
         </Alert>
       )}
 
-      {result && (
-        <Card sx={{ mb: 2 }}>
-          <CardContent>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-              {getRiskIcon(result.risk_level)}
-              <Typography variant="h6" sx={{ fontWeight: 700 }}>Kết quả phân tích</Typography>
-            </Box>
+      {analysisResult && (
+        <>
+          {/* Main result card */}
+          <Card
+            sx={{
+              mb: 2,
+              background: getRiskBgColor(analysisResult.prediction?.risk_level),
+              color: '#fff'
+            }}
+          >
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+                {getRiskIcon(analysisResult.prediction?.risk_level)}
+                <Box>
+                  <Typography variant="h5" sx={{ fontWeight: 700 }}>
+                    {analysisResult.prediction?.risk_level === 'low'
+                      ? '✅ AN TOÀN - Chuyển tiền thành công!'
+                      : analysisResult.prediction?.risk_level === 'medium'
+                        ? '⚡ CẦN XÁC MINH THÊM'
+                        : analysisResult.prediction?.risk_level === 'high'
+                          ? '⚠️ NGHI NGỜ CAO - Cần kiểm tra'
+                          : '🛑 CHẶN GIAO DỊCH - Rủi ro nghiêm trọng'}
+                  </Typography>
+                  <Typography variant="body2" sx={{ opacity: 0.9 }}>
+                    Mức độ rủi ro: {getRiskLabel(analysisResult.prediction?.risk_level)}
+                  </Typography>
+                </Box>
+              </Box>
 
-            <Grid container spacing={2}>
-              <Grid item xs={6}>
-                <Typography variant="body2" color="text.secondary">
-                  Xác suất Fraud
-                </Typography>
-                <Typography variant="h4" sx={{ color: riskColors[result.risk_level], fontWeight: 700 }}>
-                  {(result.fraud_probability * 100).toFixed(1)}%
-                </Typography>
+              <Grid container spacing={2}>
+                <Grid item xs={6} md={3}>
+                  <Typography variant="body2" sx={{ opacity: 0.8 }}>Xác suất gian lận</Typography>
+                  <Typography variant="h4" sx={{ fontWeight: 700 }}>
+                    {((analysisResult.prediction?.fraud_probability || 0) * 100).toFixed(1)}%
+                  </Typography>
+                </Grid>
+                <Grid item xs={6} md={3}>
+                  <Typography variant="body2" sx={{ opacity: 0.8 }}>Độ tin cậy</Typography>
+                  <Typography variant="h4" sx={{ fontWeight: 700 }}>
+                    {((analysisResult.prediction?.confidence || 0) * 100).toFixed(0)}%
+                  </Typography>
+                </Grid>
+                <Grid item xs={6} md={3}>
+                  <Typography variant="body2" sx={{ opacity: 0.8 }}>Dự đoán</Typography>
+                  <Typography variant="h5" sx={{ fontWeight: 700 }}>
+                    {analysisResult.prediction?.prediction === 'fraud' ? 'Gian lận' : 'Bình thường'}
+                  </Typography>
+                </Grid>
+                <Grid item xs={6} md={3}>
+                  <Typography variant="body2" sx={{ opacity: 0.8 }}>Hành động</Typography>
+                  <Typography variant="h5" sx={{ fontWeight: 700 }}>
+                    {analysisResult.prediction?.should_block ? 'CHẶN' : 'CHO PHÉP'}
+                  </Typography>
+                </Grid>
               </Grid>
-              <Grid item xs={6}>
-                <Typography variant="body2" color="text.secondary">
-                  Mức độ rủi ro
-                </Typography>
-                <Chip
-                  label={getRiskLabel(result.risk_level)}
-                  sx={{
-                    backgroundColor: riskColors[result.risk_level],
-                    color: '#fff',
-                    fontWeight: 700,
-                    mt: 1,
-                    fontSize: '1rem',
-                    padding: '4px 8px',
-                  }}
-                />
+            </CardContent>
+          </Card>
+
+          {/* Model scores */}
+          <Card sx={{ mb: 2 }}>
+            <CardContent>
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  cursor: 'pointer'
+                }}
+                onClick={() => setExpandModelDetails(!expandModelDetails)}
+              >
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <SecurityIcon sx={{ color: '#FF6B99' }} />
+                  <Typography variant="h6" sx={{ fontWeight: 700, color: '#FF6B99' }}>
+                    Kết quả từ 5 Models
+                  </Typography>
+                </Box>
+                {expandModelDetails ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+              </Box>
+
+              {/* Quick view of model scores */}
+              <Grid container spacing={1} sx={{ mt: 2 }}>
+                {analysisResult.model_scores && Object.entries(analysisResult.model_scores).map(([model, score]) => (
+                  <Grid item xs={12} sm={6} md={2.4} key={model}>
+                    <Box sx={{ textAlign: 'center', p: 1, borderRadius: 1, bgcolor: 'grey.100' }}>
+                      <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase' }}>
+                        {model.replace('_', ' ')}
+                      </Typography>
+                      <Typography
+                        variant="h6"
+                        sx={{
+                          fontWeight: 700,
+                          color: score > 0.7 ? riskColors.high : score > 0.5 ? riskColors.medium : riskColors.low
+                        }}
+                      >
+                        {(score * 100).toFixed(0)}%
+                      </Typography>
+                      <Chip
+                        label={analysisResult.models_status?.[model] ? 'Loaded' : 'N/A'}
+                        size="small"
+                        color={analysisResult.models_status?.[model] ? 'success' : 'default'}
+                        sx={{ mt: 0.5 }}
+                      />
+                    </Box>
+                  </Grid>
+                ))}
               </Grid>
-              <Grid item xs={6}>
-                <Typography variant="body2" color="text.secondary">
-                  Dự đoán
+
+              {/* Expanded details */}
+              <Collapse in={expandModelDetails}>
+                <Divider sx={{ my: 2 }} />
+                <Grid container spacing={2}>
+                  {analysisResult.model_details && Object.entries(analysisResult.model_details).map(([model, details]) => (
+                    <Grid item xs={12} md={6} key={model}>
+                      <Paper sx={{ p: 2 }}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1, textTransform: 'uppercase' }}>
+                          {model.replace('_', ' ')}
+                        </Typography>
+                        {details.loaded ? (
+                          <>
+                            <Typography variant="body2" color="text.secondary">
+                              {details.description}
+                            </Typography>
+                            {details.anomaly_score !== undefined && (
+                              <Typography variant="body2">
+                                Anomaly Score: {details.anomaly_score.toFixed(4)}
+                              </Typography>
+                            )}
+                            {details.reconstruction_error !== undefined && (
+                              <Typography variant="body2">
+                                Reconstruction Error: {details.reconstruction_error.toFixed(4)}
+                              </Typography>
+                            )}
+                          </>
+                        ) : (
+                          <Typography variant="body2" color="text.secondary">
+                            Model chưa được load
+                          </Typography>
+                        )}
+                      </Paper>
+                    </Grid>
+                  ))}
+                </Grid>
+              </Collapse>
+            </CardContent>
+          </Card>
+
+          {/* Explanation */}
+          {analysisResult.explanation && (
+            <Card>
+              <CardContent>
+                <Typography variant="h6" sx={{ mb: 2, fontWeight: 700, color: '#FF6B99' }}>
+                  Giải thích chi tiết
                 </Typography>
-                <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                  {result.prediction === 'fraud' ? 'Nghi ngờ lừa đảo' : 'Bình thường'}
-                </Typography>
-              </Grid>
-              <Grid item xs={6}>
-                <Typography variant="body2" color="text.secondary">
-                  Hành động đề xuất
-                </Typography>
-                <Typography
-                  variant="h6"
-                  sx={{
-                    fontWeight: 600,
-                    color: result.should_block ? '#D32F2F' : '#4caf50'
-                  }}
+
+                <Alert
+                  severity={
+                    analysisResult.prediction?.risk_level === 'critical' ? 'error' :
+                    analysisResult.prediction?.risk_level === 'high' ? 'warning' :
+                    analysisResult.prediction?.risk_level === 'medium' ? 'info' : 'success'
+                  }
+                  sx={{ mb: 2 }}
                 >
-                  {result.should_block ? 'Nên chặn giao dịch' : 'Cho phép giao dịch'}
-                </Typography>
-              </Grid>
-            </Grid>
-          </CardContent>
-        </Card>
-      )}
+                  {analysisResult.explanation.summary}
+                </Alert>
 
-      {explanation && (
-        <Card>
-          <CardContent>
-            <Typography variant="h6" sx={{ mb: 2, fontWeight: 700, color: '#FF6B99' }}>
-              Giải thích chi tiết
-            </Typography>
+                {/* Risk factors */}
+                {analysisResult.explanation.risk_factors?.length > 0 && (
+                  <>
+                    <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+                      Yếu tố rủi ro phát hiện:
+                    </Typography>
+                    <List dense>
+                      {analysisResult.explanation.risk_factors.map((factor, idx) => (
+                        <ListItem key={idx}>
+                          <ListItemIcon>
+                            <WarningIcon
+                              sx={{
+                                color: factor.importance === 'high' ? riskColors.high : riskColors.medium,
+                              }}
+                            />
+                          </ListItemIcon>
+                          <ListItemText primary={factor.factor} />
+                          <Chip
+                            label={factor.importance === 'high' ? 'Quan trọng' : 'Trung bình'}
+                            size="small"
+                            color={factor.importance === 'high' ? 'error' : 'warning'}
+                          />
+                        </ListItem>
+                      ))}
+                    </List>
+                  </>
+                )}
 
-            <Alert
-              severity={result?.risk_level === 'high' || result?.risk_level === 'critical' ? 'error' :
-                       result?.risk_level === 'medium' ? 'warning' : 'info'}
-              sx={{ mb: 2 }}
-            >
-              {explanation.summary}
-            </Alert>
+                {/* Positive factors */}
+                {analysisResult.explanation.positive_factors?.length > 0 && (
+                  <>
+                    <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600, mt: 2 }}>
+                      Yếu tố tích cực:
+                    </Typography>
+                    <List dense>
+                      {analysisResult.explanation.positive_factors.map((factor, idx) => (
+                        <ListItem key={idx}>
+                          <ListItemIcon>
+                            <CheckIcon sx={{ color: riskColors.low }} />
+                          </ListItemIcon>
+                          <ListItemText primary={factor} />
+                        </ListItem>
+                      ))}
+                    </List>
+                  </>
+                )}
 
-            {explanation.risk_factors?.length > 0 && (
-              <>
+                <Divider sx={{ my: 2 }} />
+
+                {/* Recommendations */}
                 <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
-                  Yếu tố rủi ro:
+                  Khuyến nghị hành động:
                 </Typography>
                 <List dense>
-                  {explanation.risk_factors.map((factor, idx) => (
+                  {analysisResult.explanation.recommendations?.map((rec, idx) => (
                     <ListItem key={idx}>
                       <ListItemIcon>
-                        <WarningIcon
-                          sx={{
-                            color: factor.importance === 'high' ? riskColors.high : riskColors.medium,
-                          }}
-                        />
+                        <TipIcon sx={{ color: '#FF8DAD' }} />
                       </ListItemIcon>
-                      <ListItemText primary={factor.factor} />
-                      <Chip
-                        label={factor.importance === 'high' ? 'Quan trọng' : 'Trung bình'}
-                        size="small"
-                        color={factor.importance === 'high' ? 'error' : 'warning'}
+                      <ListItemText
+                        primary={rec}
+                        primaryTypographyProps={{
+                          fontWeight: idx === 0 ? 600 : 400
+                        }}
                       />
                     </ListItem>
                   ))}
                 </List>
-              </>
-            )}
-
-            <Divider sx={{ my: 2 }} />
-
-            <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
-              Khuyến nghị:
-            </Typography>
-            <List dense>
-              {explanation.recommendations?.map((rec, idx) => (
-                <ListItem key={idx}>
-                  <ListItemIcon>
-                    <TipIcon sx={{ color: '#FF8DAD' }} />
-                  </ListItemIcon>
-                  <ListItemText primary={rec} />
-                </ListItem>
-              ))}
-            </List>
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
+          )}
+        </>
       )}
     </>
   );
@@ -823,22 +933,25 @@ function TransactionTest() {
 
   return (
     <Box>
-      <Typography variant="h5" sx={{ mb: 3, fontWeight: 700, color: '#FF6B99' }}>
+      <Typography variant="h5" sx={{ mb: 1, fontWeight: 700, color: '#FF6B99' }}>
         Kiểm tra giao dịch
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+        Phân tích giao dịch với dữ liệu khách hàng thực từ file Excel và 5 ML models
       </Typography>
 
       <Grid container spacing={3}>
         {/* Cột trái - Thông tin khách hàng */}
         <Grid item xs={12} md={7}>
-          {renderUserSelector()}
-          {renderUserProfile()}
+          {renderCustomerSelector()}
+          {renderCustomerProfile()}
           {renderTransactionHistory()}
         </Grid>
 
         {/* Cột phải - Form và kết quả */}
         <Grid item xs={12} md={5}>
           {renderTransactionForm()}
-          {renderResults()}
+          {renderAnalysisResults()}
         </Grid>
       </Grid>
     </Box>
