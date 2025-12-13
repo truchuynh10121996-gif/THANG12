@@ -63,6 +63,11 @@ import {
   trainLSTM,
   trainGNN,
   trainAllWithData,
+  // GNN Heterogeneous APIs (MỚI)
+  buildGNNGraph,
+  trainGNNHetero,
+  getGNNStatus,
+  clearGNNGraph,
 } from '../services/api';
 
 // Model configurations với hướng dẫn chi tiết
@@ -259,6 +264,44 @@ const MODEL_CONFIGS = {
       ],
     },
     sampleFile: 'gnn_sample.csv',
+  },
+};
+
+// GNN Heterogeneous Config (MỚI - 2 BƯỚC)
+const GNN_HETERO_CONFIG = {
+  name: 'GNN Heterogeneous (Edge-Level Fraud Detection)',
+  layer: 'Layer 2',
+  type: 'Supervised',
+  color: '#f44336',
+  icon: '🕸️',
+  description: 'Graph Neural Network với heterogeneous graph - Phát hiện fraud trên edge (giao dịch)',
+  dataRequirements: {
+    format: 'Nhiều file CSV/JSON hoặc ZIP',
+    hasLabel: true,
+    minRows: 1000,
+    recommendedRows: '10,000 - 500,000',
+    requiredFiles: [
+      { name: 'nodes.csv', description: 'Tất cả nodes với node_id, node_type (user/recipient/device/ip)' },
+      { name: 'edges_transfer.csv', description: 'Edges chuyển tiền: edge_id, src_node_id, dst_node_id, features' },
+      { name: 'edge_labels.csv', description: 'Labels cho edges: edge_id, label (0/1)' },
+      { name: 'splits.csv', description: 'Train/val/test split: edge_id, split (train/val/test)' },
+    ],
+    optionalFiles: [
+      { name: 'nodes_user.csv', description: 'Features riêng cho user nodes' },
+      { name: 'nodes_recipient.csv', description: 'Features riêng cho recipient nodes' },
+      { name: 'nodes_device.csv', description: 'Features riêng cho device nodes' },
+      { name: 'nodes_ip.csv', description: 'Features riêng cho IP nodes' },
+      { name: 'edges_uses_device.csv', description: 'Edges user → device' },
+      { name: 'edges_uses_ip.csv', description: 'Edges user → IP' },
+      { name: 'metadata.json', description: 'Metadata graph (optional)' },
+    ],
+    notes: [
+      'QUAN TRỌNG: Pipeline 2 bước - Build graph trước, Train sau',
+      'Hỗ trợ heterogeneous graph (nhiều loại nodes và edges)',
+      'Edge-level classification: Phát hiện fraud trên từng giao dịch',
+      'Có thể upload ZIP chứa toàn bộ thư mục gnn_data',
+      'Sanity check tự động kiểm tra tính toàn vẹn dữ liệu',
+    ],
   },
 };
 
@@ -623,6 +666,344 @@ USR002,USR777,25000000,individual,transfer,1,2024-12-07 04:15:00,peer_transfer,1
   }
 }
 
+// GNN Heterogeneous Card Component với 2 nút riêng biệt
+function GNNHeteroCard({ onBuildGraph, onTrain, graphStatus, buildingGraph, trainingGNN }) {
+  const fileInputRef = useRef(null);
+  const [selectedFiles, setSelectedFiles] = useState([]);
+  const [dragOver, setDragOver] = useState(false);
+  const [graphStats, setGraphStats] = useState(null);
+
+  const handleFileSelect = (event) => {
+    const files = Array.from(event.target.files || []);
+    if (files.length > 0) {
+      setSelectedFiles(files);
+    }
+  };
+
+  const handleDrop = (event) => {
+    event.preventDefault();
+    setDragOver(false);
+    const files = Array.from(event.dataTransfer.files || []);
+    const validFiles = files.filter(f =>
+      f.name.endsWith('.csv') || f.name.endsWith('.json') || f.name.endsWith('.zip')
+    );
+    if (validFiles.length > 0) {
+      setSelectedFiles(validFiles);
+    }
+  };
+
+  const handleDragOver = (event) => {
+    event.preventDefault();
+    setDragOver(true);
+  };
+
+  const handleDragLeave = () => {
+    setDragOver(false);
+  };
+
+  const handleBuildGraph = async () => {
+    if (selectedFiles.length === 0) return;
+
+    const formData = new FormData();
+    selectedFiles.forEach((file, idx) => {
+      formData.append(`file${idx}`, file);
+    });
+
+    const result = await onBuildGraph(formData);
+    if (result?.graph_stats) {
+      setGraphStats(result.graph_stats);
+    }
+  };
+
+  const handleTrain = () => {
+    onTrain();
+  };
+
+  const handleClearFiles = () => {
+    setSelectedFiles([]);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const isGraphReady = graphStatus?.graph_ready || false;
+
+  return (
+    <Card
+      sx={{
+        border: '3px solid #f44336',
+        bgcolor: isGraphReady ? 'rgba(76, 175, 80, 0.05)' : 'background.paper',
+        position: 'relative',
+        overflow: 'visible',
+      }}
+    >
+      {/* Badge trạng thái */}
+      {isGraphReady && (
+        <Box
+          sx={{
+            position: 'absolute',
+            top: -10,
+            right: 16,
+            bgcolor: '#4caf50',
+            color: 'white',
+            px: 2,
+            py: 0.5,
+            borderRadius: 2,
+            fontSize: '0.75rem',
+            fontWeight: 700,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 0.5,
+            boxShadow: 2,
+          }}
+        >
+          <CheckCircleIcon sx={{ fontSize: 16 }} />
+          GRAPH ĐÃ SẴN SÀNG
+        </Box>
+      )}
+
+      <CardContent>
+        {/* Header */}
+        <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+          <Typography variant="h4" sx={{ mr: 1 }}>🕸️</Typography>
+          <Box sx={{ flex: 1 }}>
+            <Typography variant="h6" sx={{ fontWeight: 600, color: '#f44336' }}>
+              {GNN_HETERO_CONFIG.name}
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 1, mt: 0.5 }}>
+              <Chip
+                label={GNN_HETERO_CONFIG.layer}
+                size="small"
+                sx={{ bgcolor: '#f44336', color: 'white', fontSize: '0.7rem' }}
+              />
+              <Chip
+                label={GNN_HETERO_CONFIG.type}
+                size="small"
+                variant="outlined"
+                sx={{ fontSize: '0.7rem' }}
+              />
+              <Chip
+                label="2 BƯỚC"
+                size="small"
+                sx={{ bgcolor: '#ff9800', color: 'white', fontSize: '0.7rem', fontWeight: 600 }}
+              />
+            </Box>
+          </Box>
+        </Box>
+
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          {GNN_HETERO_CONFIG.description}
+        </Typography>
+
+        <Divider sx={{ my: 2 }} />
+
+        {/* Data Requirements Accordion */}
+        <Accordion sx={{ mb: 2, boxShadow: 'none', '&:before': { display: 'none' } }}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ px: 0 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+              <InfoIcon sx={{ mr: 1, fontSize: 20, color: 'primary.main' }} />
+              <Typography variant="subtitle2" color="primary">
+                Yêu cầu dữ liệu (Nhiều files)
+              </Typography>
+            </Box>
+          </AccordionSummary>
+          <AccordionDetails sx={{ px: 0 }}>
+            <Box sx={{ bgcolor: 'grey.50', p: 2, borderRadius: 1 }}>
+              <Typography variant="subtitle2" sx={{ mb: 1, color: 'error.main' }}>
+                📋 Files BẮT BUỘC:
+              </Typography>
+              <TableContainer component={Paper} variant="outlined" sx={{ mb: 2 }}>
+                <Table size="small">
+                  <TableBody>
+                    {GNN_HETERO_CONFIG.dataRequirements.requiredFiles.map((file) => (
+                      <TableRow key={file.name}>
+                        <TableCell sx={{ fontFamily: 'monospace', fontWeight: 600, color: 'error.main' }}>
+                          {file.name}
+                        </TableCell>
+                        <TableCell sx={{ fontSize: '0.75rem' }}>{file.description}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+
+              <Typography variant="subtitle2" sx={{ mb: 1, color: 'info.main' }}>
+                📋 Files TÙY CHỌN:
+              </Typography>
+              <TableContainer component={Paper} variant="outlined" sx={{ mb: 2 }}>
+                <Table size="small">
+                  <TableBody>
+                    {GNN_HETERO_CONFIG.dataRequirements.optionalFiles.map((file) => (
+                      <TableRow key={file.name}>
+                        <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
+                          {file.name}
+                        </TableCell>
+                        <TableCell sx={{ fontSize: '0.7rem' }}>{file.description}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+
+              <Alert severity="warning" sx={{ mb: 1 }}>
+                <Typography variant="subtitle2" sx={{ mb: 1 }}>⚠️ Lưu ý quan trọng:</Typography>
+                <List dense sx={{ py: 0 }}>
+                  {GNN_HETERO_CONFIG.dataRequirements.notes.map((note, idx) => (
+                    <ListItem key={idx} sx={{ py: 0, px: 0 }}>
+                      <ListItemText
+                        primary={`• ${note}`}
+                        primaryTypographyProps={{ variant: 'body2' }}
+                      />
+                    </ListItem>
+                  ))}
+                </List>
+              </Alert>
+            </Box>
+          </AccordionDetails>
+        </Accordion>
+
+        {/* Upload Area */}
+        <Box
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          sx={{
+            border: '2px dashed',
+            borderColor: dragOver ? '#f44336' : 'grey.300',
+            borderRadius: 2,
+            p: 2,
+            textAlign: 'center',
+            bgcolor: dragOver ? 'rgba(244, 67, 54, 0.1)' : 'grey.50',
+            cursor: 'pointer',
+            transition: 'all 0.3s ease',
+            mb: 2,
+          }}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,.json,.zip"
+            multiple
+            hidden
+            onChange={handleFileSelect}
+          />
+          {selectedFiles.length > 0 ? (
+            <Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1, mb: 1 }}>
+                <FileIcon color="primary" />
+                <Typography variant="body2" fontWeight={600}>
+                  {selectedFiles.length} file(s) đã chọn
+                </Typography>
+                <IconButton
+                  size="small"
+                  onClick={(e) => { e.stopPropagation(); handleClearFiles(); }}
+                >
+                  <DeleteIcon fontSize="small" />
+                </IconButton>
+              </Box>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, justifyContent: 'center' }}>
+                {selectedFiles.map((file, idx) => (
+                  <Chip
+                    key={idx}
+                    label={file.name}
+                    size="small"
+                    variant="outlined"
+                    sx={{ fontSize: '0.7rem' }}
+                  />
+                ))}
+              </Box>
+            </Box>
+          ) : (
+            <>
+              <UploadIcon sx={{ fontSize: 40, color: 'grey.400', mb: 1 }} />
+              <Typography variant="body2" color="text.secondary">
+                Kéo thả các file CSV/JSON hoặc file ZIP vào đây
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                Hoặc click để chọn nhiều files
+              </Typography>
+            </>
+          )}
+        </Box>
+
+        {/* Graph Stats nếu đã build */}
+        {(graphStats || graphStatus?.metadata) && (
+          <Alert severity="success" sx={{ mb: 2 }}>
+            <Typography variant="subtitle2">📊 Thông tin Graph:</Typography>
+            <Typography variant="body2">
+              Node types: {(graphStats?.node_types || graphStatus?.metadata?.node_types || []).join(', ')}
+            </Typography>
+            <Typography variant="body2">
+              Edge types: {(graphStats?.edge_types || graphStatus?.metadata?.edge_types || []).join(', ')}
+            </Typography>
+          </Alert>
+        )}
+
+        {/* 2 NÚT RIÊNG BIỆT */}
+        <Grid container spacing={2}>
+          {/* NÚT 1: Tạo mạng lưới */}
+          <Grid item xs={12} md={6}>
+            <Button
+              variant="contained"
+              fullWidth
+              size="large"
+              startIcon={buildingGraph ? <CircularProgress size={20} color="inherit" /> : null}
+              onClick={handleBuildGraph}
+              disabled={selectedFiles.length === 0 || buildingGraph || trainingGNN}
+              sx={{
+                bgcolor: '#9c27b0',
+                '&:hover': { bgcolor: '#7b1fa2' },
+                fontWeight: 600,
+                py: 1.5,
+              }}
+            >
+              {buildingGraph ? 'Đang xây dựng...' : '🕸️ Tạo mạng lưới GNN'}
+            </Button>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'center', mt: 0.5 }}>
+              Bước 1: Load data, sanity check, build graph
+            </Typography>
+          </Grid>
+
+          {/* NÚT 2: Huấn luyện */}
+          <Grid item xs={12} md={6}>
+            <Button
+              variant="contained"
+              fullWidth
+              size="large"
+              startIcon={trainingGNN ? <CircularProgress size={20} color="inherit" /> : <PlayIcon />}
+              onClick={handleTrain}
+              disabled={!isGraphReady || buildingGraph || trainingGNN}
+              sx={{
+                bgcolor: isGraphReady ? '#4caf50' : '#9e9e9e',
+                '&:hover': { bgcolor: isGraphReady ? '#388e3c' : '#757575' },
+                fontWeight: 600,
+                py: 1.5,
+              }}
+            >
+              {trainingGNN ? 'Đang huấn luyện...' : '🎯 Huấn luyện GNN'}
+            </Button>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'center', mt: 0.5 }}>
+              Bước 2: Train model với graph đã build
+            </Typography>
+          </Grid>
+        </Grid>
+
+        {/* Warning nếu chưa build graph */}
+        {!isGraphReady && (
+          <Alert severity="info" sx={{ mt: 2 }}>
+            <Typography variant="body2">
+              ⚠️ Cần tạo mạng lưới GNN trước khi huấn luyện. Upload files và bấm "Tạo mạng lưới GNN".
+            </Typography>
+          </Alert>
+        )}
+
+        {(buildingGraph || trainingGNN) && <LinearProgress sx={{ mt: 2 }} color="success" />}
+      </CardContent>
+    </Card>
+  );
+}
+
 function ModelTraining() {
   const [modelStatus, setModelStatus] = useState(null);
   const [metrics, setMetrics] = useState(null);
@@ -635,16 +1016,24 @@ function ModelTraining() {
   const [trainingResult, setTrainingResult] = useState(null); // Kết quả training chi tiết
   const [trainedModels, setTrainedModels] = useState([]); // Danh sách models đã train thành công
 
+  // GNN Heterogeneous states (MỚI)
+  const [gnnGraphStatus, setGnnGraphStatus] = useState(null); // Trạng thái graph GNN
+  const [buildingGraph, setBuildingGraph] = useState(false);  // Đang build graph
+  const [trainingGNN, setTrainingGNN] = useState(false);       // Đang train GNN
+  const [gnnResult, setGnnResult] = useState(null);            // Kết quả GNN
+
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [statusRes, metricsRes] = await Promise.all([
+      const [statusRes, metricsRes, gnnStatusRes] = await Promise.all([
         getModelStatus(),
         getMetrics(),
+        getGNNStatus().catch(() => ({ graph_ready: false })), // GNN status
       ]);
 
       setModelStatus(statusRes.status);
       setMetrics(metricsRes.metrics);
+      setGnnGraphStatus(gnnStatusRes); // GNN status
       setError(null);
     } catch (err) {
       setError('Không thể kết nối đến ML Service - hiển thị dữ liệu mẫu');
@@ -665,6 +1054,7 @@ function ModelTraining() {
         gnn: { precision: 0.78, recall: 0.76, f1_score: 0.77, roc_auc: 0.87 },
         ensemble: { precision: 0.83, recall: 0.80, f1_score: 0.81, roc_auc: 0.93 },
       });
+      setGnnGraphStatus({ graph_ready: false });
     } finally {
       setLoading(false);
     }
@@ -673,6 +1063,99 @@ function ModelTraining() {
   useEffect(() => {
     fetchData();
   }, []);
+
+  // === GNN HETERO HANDLERS (MỚI) ===
+
+  // Handler: Build GNN Graph (Bước 1)
+  const handleBuildGNNGraph = async (formData) => {
+    try {
+      setBuildingGraph(true);
+      setError(null);
+      setSuccess(null);
+      setGnnResult(null);
+
+      console.log('[GNN] Bắt đầu build graph...');
+      const result = await buildGNNGraph(formData);
+      console.log('[GNN] Kết quả build graph:', result);
+
+      if (result.success) {
+        setSuccess(`✅ TẠO MẠNG LƯỚI GNN THÀNH CÔNG!\n${result.message}\nBấm "Huấn luyện GNN" để train model.`);
+        setGnnGraphStatus({ graph_ready: true, metadata: result.graph_stats });
+        setGnnResult(result);
+        return result;
+      } else {
+        const errorMsg = result.sanity_errors
+          ? `Lỗi dữ liệu:\n${result.sanity_errors.join('\n')}`
+          : result.error;
+        setError(`❌ Tạo mạng lưới thất bại: ${errorMsg}`);
+        return null;
+      }
+    } catch (err) {
+      console.error('[GNN] Lỗi build graph:', err);
+      const errorMsg = err.response?.data?.error || err.message;
+      const details = err.response?.data?.sanity_errors || err.response?.data?.details;
+      setError(`❌ Tạo mạng lưới thất bại: ${errorMsg}${details ? '\n' + (Array.isArray(details) ? details.join('\n') : details) : ''}`);
+      return null;
+    } finally {
+      setBuildingGraph(false);
+    }
+  };
+
+  // Handler: Train GNN (Bước 2)
+  const handleTrainGNN = async () => {
+    try {
+      setTrainingGNN(true);
+      setError(null);
+      setSuccess(null);
+      setGnnResult(null);
+
+      console.log('[GNN] Bắt đầu training...');
+      const result = await trainGNNHetero();
+      console.log('[GNN] Kết quả training:', result);
+
+      if (result.success) {
+        // Thêm vào danh sách models đã train
+        setTrainedModels(prev => {
+          if (!prev.includes('gnn_hetero')) {
+            return [...prev, 'gnn_hetero'];
+          }
+          return prev;
+        });
+
+        // Format success message
+        const metrics = result.metrics?.test || {};
+        let successMsg = `✅ HUẤN LUYỆN GNN THÀNH CÔNG!\n`;
+        successMsg += `📊 Metrics trên Test set:\n`;
+        if (metrics.accuracy) successMsg += `  • Accuracy: ${(metrics.accuracy * 100).toFixed(2)}%\n`;
+        if (metrics.precision) successMsg += `  • Precision: ${(metrics.precision * 100).toFixed(2)}%\n`;
+        if (metrics.recall) successMsg += `  • Recall: ${(metrics.recall * 100).toFixed(2)}%\n`;
+        if (metrics.f1_score) successMsg += `  • F1-Score: ${(metrics.f1_score * 100).toFixed(2)}%\n`;
+        if (metrics.roc_auc) successMsg += `  • ROC-AUC: ${(metrics.roc_auc * 100).toFixed(2)}%`;
+
+        setSuccess(successMsg);
+        setGnnResult(result);
+        setTrainingResult({
+          modelName: 'GNN Heterogeneous',
+          modelKey: 'gnn_hetero',
+          success: true,
+          metrics: metrics,
+          training_info: result.training_info,
+          graph_info: result.graph_info,
+        });
+
+        await fetchData();
+      } else {
+        setError(`❌ Huấn luyện GNN thất bại: ${result.error}`);
+      }
+    } catch (err) {
+      console.error('[GNN] Lỗi training:', err);
+      const errorMsg = err.response?.data?.error || err.message;
+      const hint = err.response?.data?.hint;
+      setError(`❌ Huấn luyện GNN thất bại: ${errorMsg}${hint ? '\n💡 ' + hint : ''}`);
+    } finally {
+      setTrainingGNN(false);
+    }
+  };
 
   const handleTrainModel = async (modelKey, file) => {
     try {
@@ -958,8 +1441,31 @@ function ModelTraining() {
 
       {/* Tab 0: Train Individual Models */}
       <TabPanel value={tabValue} index={0}>
+        {/* GNN Heterogeneous Section (MỚI - 2 BƯỚC) */}
+        <Box sx={{ mb: 4 }}>
+          <Typography variant="h6" sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+            🕸️ GNN Heterogeneous (Pipeline 2 Bước)
+            <Chip label="MỚI" size="small" color="error" sx={{ fontWeight: 600 }} />
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Pipeline chuyên nghiệp cho edge-level fraud detection với heterogeneous graph.
+            Upload thư mục gnn_data (các file CSV/JSON hoặc ZIP) và thực hiện 2 bước riêng biệt.
+          </Typography>
+          <GNNHeteroCard
+            onBuildGraph={handleBuildGNNGraph}
+            onTrain={handleTrainGNN}
+            graphStatus={gnnGraphStatus}
+            buildingGraph={buildingGraph}
+            trainingGNN={trainingGNN}
+          />
+        </Box>
+
+        <Divider sx={{ my: 3 }}>
+          <Chip label="Các models khác" size="small" />
+        </Divider>
+
         <Grid container spacing={3}>
-          {Object.entries(MODEL_CONFIGS).map(([key, config]) => (
+          {Object.entries(MODEL_CONFIGS).filter(([key]) => key !== 'gnn').map(([key, config]) => (
             <Grid item xs={12} md={6} key={key}>
               <ModelCard
                 modelKey={key}
@@ -972,6 +1478,24 @@ function ModelTraining() {
               />
             </Grid>
           ))}
+        </Grid>
+
+        {/* Legacy GNN (cho file CSV đơn giản) */}
+        <Divider sx={{ my: 3 }}>
+          <Chip label="GNN Legacy (file CSV đơn giản)" size="small" variant="outlined" />
+        </Divider>
+        <Grid container spacing={3}>
+          <Grid item xs={12} md={6}>
+            <ModelCard
+              modelKey="gnn"
+              config={MODEL_CONFIGS.gnn}
+              status={modelStatus}
+              onTrain={handleTrainModel}
+              training={training}
+              currentModel={trainingModel}
+              trainedModels={trainedModels}
+            />
+          </Grid>
         </Grid>
       </TabPanel>
 
