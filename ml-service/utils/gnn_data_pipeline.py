@@ -147,7 +147,7 @@ class GNNDataPipeline:
         self.log(f"Load dữ liệu hoàn tất! Tổng cộng {len(self.data)} files", level='success')
         return self.data
 
-    def sanity_check(self) -> Tuple[bool, List[str]]:
+    def sanity_check(self, auto_fix: bool = True) -> Tuple[bool, List[str]]:
         """
         Kiểm tra tính toàn vẹn dữ liệu
 
@@ -155,6 +155,9 @@ class GNNDataPipeline:
         1. Mọi src_node_id, dst_node_id trong edges_* PHẢI tồn tại trong nodes.csv
         2. Mọi edge_id trong edge_labels.csv và splits.csv PHẢI match với edges_transfer.csv
         3. Kiểm tra format (leading zeros, etc.)
+
+        Args:
+            auto_fix: Tự động thêm missing nodes (device, ip) nếu True
 
         Returns:
             Tuple[bool, List[str]]: (is_valid, list_of_errors)
@@ -172,7 +175,7 @@ class GNNDataPipeline:
             self.errors.append("Không có dữ liệu nodes.csv")
             return False, self.errors
 
-        # Xác định cột node_id
+        # Xác định cột node_id và node_type
         node_id_col = None
         for col in ['node_id', 'id', 'node']:
             if col in nodes_df.columns:
@@ -182,6 +185,8 @@ class GNNDataPipeline:
         if node_id_col is None:
             self.errors.append("Không tìm thấy cột node_id trong nodes.csv")
             return False, self.errors
+
+        type_col = 'node_type' if 'node_type' in nodes_df.columns else 'type'
 
         # Chuyển đổi sang string để đảm bảo so sánh chính xác
         all_node_ids = set(nodes_df[node_id_col].astype(str).unique())
@@ -295,8 +300,10 @@ class GNNDataPipeline:
                     else:
                         self.log(f"  ✅ Tất cả {len(split_edge_ids)} edge_id trong splits.csv hợp lệ", level='success')
 
-        # === CHECK 3: Kiểm tra các edge types khác ===
-        for edge_key in ['edges_uses_device', 'edges_uses_ip']:
+        # === CHECK 3: Kiểm tra các edge types khác (với auto-fix) ===
+        missing_nodes_to_add = []  # Collect missing nodes to add
+
+        for edge_key, target_node_type in [('edges_uses_device', 'device'), ('edges_uses_ip', 'ip')]:
             edge_df = self.data.get(edge_key)
             if edge_df is not None:
                 self.log(f"\n[CHECK 3] Kiểm tra {edge_key}.csv...")
@@ -320,18 +327,77 @@ class GNNDataPipeline:
                     missing_dst = dst_ids - all_node_ids
 
                     if missing_src:
-                        self.errors.append(
-                            f"{edge_key}.csv: {len(missing_src)} src không tồn tại trong nodes. "
-                            f"Ví dụ: {list(missing_src)[:5]}"
-                        )
+                        if auto_fix:
+                            self.warnings.append(
+                                f"{edge_key}.csv: {len(missing_src)} src nodes thiếu sẽ được tự động thêm"
+                            )
+                            for node_id in missing_src:
+                                missing_nodes_to_add.append({
+                                    'node_id': node_id,
+                                    'node_type': 'user'  # src thường là user
+                                })
+                        else:
+                            self.errors.append(
+                                f"{edge_key}.csv: {len(missing_src)} src không tồn tại trong nodes. "
+                                f"Ví dụ: {list(missing_src)[:5]}"
+                            )
+
                     if missing_dst:
-                        self.errors.append(
-                            f"{edge_key}.csv: {len(missing_dst)} dst không tồn tại trong nodes. "
-                            f"Ví dụ: {list(missing_dst)[:5]}"
-                        )
+                        if auto_fix:
+                            self.warnings.append(
+                                f"{edge_key}.csv: {len(missing_dst)} {target_node_type} nodes thiếu sẽ được tự động thêm"
+                            )
+                            self.log(f"  ⚠️ Tự động thêm {len(missing_dst)} missing {target_node_type} nodes", level='warning')
+                            for node_id in missing_dst:
+                                missing_nodes_to_add.append({
+                                    'node_id': node_id,
+                                    'node_type': target_node_type
+                                })
+                        else:
+                            self.errors.append(
+                                f"{edge_key}.csv: {len(missing_dst)} dst không tồn tại trong nodes. "
+                                f"Ví dụ: {list(missing_dst)[:5]}"
+                            )
 
                     if not missing_src and not missing_dst:
                         self.log(f"  ✅ Tất cả {len(edge_df)} edges hợp lệ", level='success')
+                    elif auto_fix and (missing_src or missing_dst):
+                        self.log(f"  ✅ {len(edge_df)} edges sẽ được xử lý (auto-fix enabled)", level='success')
+
+        # === AUTO-FIX: Thêm missing nodes vào nodes DataFrame ===
+        if auto_fix and missing_nodes_to_add:
+            self.log(f"\n[AUTO-FIX] Thêm {len(missing_nodes_to_add)} missing nodes...")
+
+            # Tạo DataFrame cho missing nodes
+            new_nodes_data = []
+            for node_info in missing_nodes_to_add:
+                node_id = node_info['node_id']
+                node_type = node_info['node_type']
+
+                # Tạo row mới với các features mặc định
+                new_row = {node_id_col: node_id}
+                if type_col in nodes_df.columns:
+                    new_row[type_col] = node_type
+
+                # Thêm các cột khác với giá trị mặc định (0 hoặc '')
+                for col in nodes_df.columns:
+                    if col not in new_row:
+                        if nodes_df[col].dtype in ['int64', 'float64']:
+                            new_row[col] = 0
+                        else:
+                            new_row[col] = ''
+
+                new_nodes_data.append(new_row)
+
+            # Thêm vào DataFrame
+            new_nodes_df = pd.DataFrame(new_nodes_data)
+            self.data['nodes'] = pd.concat([nodes_df, new_nodes_df], ignore_index=True)
+
+            # Cập nhật all_node_ids
+            all_node_ids.update([n['node_id'] for n in missing_nodes_to_add])
+
+            self.log(f"  ✅ Đã thêm {len(missing_nodes_to_add)} nodes mới", level='success')
+            self.log(f"  📊 Tổng số nodes sau auto-fix: {len(all_node_ids)}")
 
         # === Tổng kết ===
         self.log("\n" + "="*60)

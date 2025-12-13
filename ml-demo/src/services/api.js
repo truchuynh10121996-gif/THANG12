@@ -208,19 +208,7 @@ export const trainLSTM = async (formData) => {
   });
 };
 
-/**
- * Train GNN model (LEGACY - dùng cho file CSV đơn giản)
- * @param {FormData} formData - FormData chứa file CSV (cần thông tin nodes và edges)
- * @returns {Promise} - Kết quả training
- */
-export const trainGNN = async (formData) => {
-  return api.post('/train/gnn', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: TRAINING_TIMEOUT,
-  });
-};
-
-// ============ GNN HETEROGENEOUS APIs (MỚI - 2 BƯỚC) ============
+// ============ GNN HETEROGENEOUS APIs ============
 
 /**
  * 🕸️ BƯỚC 1: Tạo mạng lưới GNN
