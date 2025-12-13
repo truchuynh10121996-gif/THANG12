@@ -209,7 +209,7 @@ export const trainLSTM = async (formData) => {
 };
 
 /**
- * Train GNN model
+ * Train GNN model (LEGACY - dùng cho file CSV đơn giản)
  * @param {FormData} formData - FormData chứa file CSV (cần thông tin nodes và edges)
  * @returns {Promise} - Kết quả training
  */
@@ -218,6 +218,56 @@ export const trainGNN = async (formData) => {
     headers: { 'Content-Type': 'multipart/form-data' },
     timeout: TRAINING_TIMEOUT,
   });
+};
+
+// ============ GNN HETEROGENEOUS APIs (MỚI - 2 BƯỚC) ============
+
+/**
+ * 🕸️ BƯỚC 1: Tạo mạng lưới GNN
+ * Upload các file CSV/JSON hoặc file ZIP chứa dữ liệu GNN
+ *
+ * Files cần có:
+ * - nodes.csv: Tất cả nodes (user, recipient, device, ip)
+ * - edges_transfer.csv: Edges chuyển tiền (user → recipient)
+ * - edge_labels.csv: Labels cho edges (fraud/normal)
+ * - splits.csv: Train/val/test split
+ *
+ * @param {FormData} formData - FormData chứa các file CSV/JSON hoặc ZIP
+ * @returns {Promise} - Kết quả build graph (graph_stats, warnings)
+ */
+export const buildGNNGraph = async (formData) => {
+  return api.post('/train/gnn/build-graph', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: TRAINING_TIMEOUT,
+  });
+};
+
+/**
+ * 🎯 BƯỚC 2: Huấn luyện GNN
+ * CHỈ chạy khi đã build graph (Bước 1)
+ *
+ * @returns {Promise} - Kết quả training (metrics, training_info)
+ */
+export const trainGNNHetero = async () => {
+  return api.post('/train/gnn/train', {}, {
+    timeout: TRAINING_TIMEOUT,
+  });
+};
+
+/**
+ * Kiểm tra trạng thái GNN graph
+ * @returns {Promise} - { graph_ready: boolean, metadata: object }
+ */
+export const getGNNStatus = async () => {
+  return api.get('/train/gnn/status');
+};
+
+/**
+ * Xóa graph GNN đã build (để build lại với dữ liệu mới)
+ * @returns {Promise} - Kết quả xóa
+ */
+export const clearGNNGraph = async () => {
+  return api.post('/train/gnn/clear');
 };
 
 /**

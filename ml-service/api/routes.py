@@ -1799,9 +1799,376 @@ def train_lstm():
         }), 500
 
 
+# ===== GNN HETEROGENEOUS ENDPOINTS (MỚI - 2 BƯỚC) =====
+
+@api.route('/train/gnn/build-graph', methods=['POST'])
+def build_gnn_graph():
+    """
+    🕸️ BƯỚC 1: Tạo mạng lưới GNN (Build Graph)
+
+    Upload thư mục gnn_data dưới dạng ZIP hoặc các file riêng lẻ.
+
+    Files cần có:
+    - nodes.csv: Tất cả nodes (user, recipient, device, ip)
+    - edges_transfer.csv: Edges chuyển tiền (user → recipient)
+    - edge_labels.csv: Labels cho edges (fraud/normal)
+    - splits.csv: Train/val/test split
+
+    Files tùy chọn:
+    - nodes_user.csv, nodes_recipient.csv, nodes_device.csv, nodes_ip.csv
+    - edges_uses_device.csv, edges_uses_ip.csv
+    - metadata.json, graph_preview.json
+
+    Workflow:
+    1. Load tất cả files
+    2. Sanity check (kiểm tra tính toàn vẹn)
+    3. Build heterogeneous graph PyTorch Geometric
+    4. Lưu graph + tạo flag file
+
+    KHÔNG train model ở bước này!
+    """
+    logger.info("="*60)
+    logger.info("[GNN-GRAPH] 🕸️ BẮT ĐẦU TẠO MẠNG LƯỚI GNN")
+    logger.info("="*60)
+
+    try:
+        # Kiểm tra files upload
+        if len(request.files) == 0:
+            logger.error("[GNN-GRAPH] Không có file được upload")
+            return jsonify({
+                'success': False,
+                'error': 'Không có file được upload. Vui lòng upload các file CSV/JSON.'
+            }), 400
+
+        # Tạo thư mục tạm để lưu files
+        import shutil
+        import zipfile
+
+        temp_dir = os.path.join(tempfile.gettempdir(), f'gnn_data_{datetime.now().strftime("%Y%m%d_%H%M%S")}')
+        os.makedirs(temp_dir, exist_ok=True)
+
+        logger.info(f"[GNN-GRAPH] Thư mục tạm: {temp_dir}")
+
+        # Xử lý files upload
+        uploaded_files = []
+
+        for key in request.files:
+            file = request.files[key]
+            if file.filename == '':
+                continue
+
+            filename = file.filename
+            filepath = os.path.join(temp_dir, filename)
+
+            # Nếu là ZIP, giải nén
+            if filename.endswith('.zip'):
+                logger.info(f"[GNN-GRAPH] Đang giải nén: {filename}")
+                file.save(filepath)
+                with zipfile.ZipFile(filepath, 'r') as zip_ref:
+                    zip_ref.extractall(temp_dir)
+                os.remove(filepath)
+
+                # Kiểm tra xem có thư mục con không
+                subdirs = [d for d in os.listdir(temp_dir) if os.path.isdir(os.path.join(temp_dir, d))]
+                if len(subdirs) == 1:
+                    # Di chuyển files từ thư mục con ra ngoài
+                    subdir_path = os.path.join(temp_dir, subdirs[0])
+                    for f in os.listdir(subdir_path):
+                        shutil.move(os.path.join(subdir_path, f), temp_dir)
+                    os.rmdir(subdir_path)
+            else:
+                # Lưu file trực tiếp
+                file.save(filepath)
+                uploaded_files.append(filename)
+                logger.info(f"[GNN-GRAPH] Đã lưu: {filename}")
+
+        # List tất cả files trong temp_dir
+        all_files = os.listdir(temp_dir)
+        logger.info(f"[GNN-GRAPH] Các files đã load: {all_files}")
+
+        # Import và chạy pipeline
+        from utils.gnn_data_pipeline import GNNDataPipeline
+
+        pipeline = GNNDataPipeline(verbose=True)
+
+        # Load data
+        logger.info("[GNN-GRAPH] Bắt đầu load dữ liệu...")
+        try:
+            pipeline.load_data_from_directory(temp_dir)
+        except FileNotFoundError as e:
+            logger.error(f"[GNN-GRAPH] Thiếu file: {str(e)}")
+            # Cleanup
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            return jsonify({
+                'success': False,
+                'error': f'Thiếu file bắt buộc: {str(e)}',
+                'required_files': ['nodes.csv', 'edges_transfer.csv', 'edge_labels.csv', 'splits.csv'],
+                'uploaded_files': all_files
+            }), 400
+
+        # Sanity check
+        logger.info("[GNN-GRAPH] Bắt đầu sanity check...")
+        is_valid, errors = pipeline.sanity_check()
+
+        if not is_valid:
+            logger.error(f"[GNN-GRAPH] Sanity check thất bại: {errors}")
+            # Cleanup
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            return jsonify({
+                'success': False,
+                'error': 'Dữ liệu không hợp lệ!',
+                'sanity_errors': errors
+            }), 400
+
+        # Build graph
+        logger.info("[GNN-GRAPH] Bắt đầu build heterogeneous graph...")
+        graph = pipeline.build_hetero_graph()
+
+        # Save graph
+        pipeline.save_graph(graph, {
+            'source_dir': temp_dir,
+            'uploaded_files': all_files
+        })
+
+        # Cleanup temp dir
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+        # Thống kê graph
+        graph_stats = {
+            'node_types': list(graph.node_types),
+            'edge_types': [str(et) for et in graph.edge_types],
+            'nodes': {},
+            'edges': {}
+        }
+
+        for nt in graph.node_types:
+            graph_stats['nodes'][nt] = {
+                'count': graph[nt].num_nodes,
+                'features': graph[nt].x.shape[1]
+            }
+
+        for et in graph.edge_types:
+            edge_info = {
+                'count': graph[et].edge_index.shape[1]
+            }
+            if hasattr(graph[et], 'y'):
+                labels = graph[et].y
+                edge_info['fraud_count'] = int(labels.sum().item())
+                edge_info['normal_count'] = int(len(labels) - labels.sum().item())
+            if hasattr(graph[et], 'train_mask'):
+                edge_info['train_count'] = int(graph[et].train_mask.sum().item())
+                edge_info['val_count'] = int(graph[et].val_mask.sum().item())
+                edge_info['test_count'] = int(graph[et].test_mask.sum().item())
+            graph_stats['edges'][str(et)] = edge_info
+
+        logger.info("="*60)
+        logger.info("[GNN-GRAPH] ✅ TẠO MẠNG LƯỚI GNN THÀNH CÔNG!")
+        logger.info("="*60)
+
+        return jsonify({
+            'success': True,
+            'message': '✅ Tạo mạng lưới GNN thành công! Bạn có thể tiến hành huấn luyện.',
+            'graph_ready': True,
+            'graph_stats': graph_stats,
+            'warnings': pipeline.warnings if pipeline.warnings else None,
+            'next_step': 'Bấm nút "Huấn luyện GNN" để train model',
+            'timestamp': datetime.now().isoformat()
+        })
+
+    except Exception as e:
+        error_msg = str(e)
+        error_traceback = traceback.format_exc()
+        logger.error(f"[GNN-GRAPH] LỖI: {error_msg}")
+        logger.error(f"[GNN-GRAPH] Traceback:\n{error_traceback}")
+
+        return jsonify({
+            'success': False,
+            'error': f'Tạo mạng lưới thất bại: {error_msg}',
+            'details': error_traceback
+        }), 500
+
+
+@api.route('/train/gnn/train', methods=['POST'])
+def train_gnn_hetero():
+    """
+    🎯 BƯỚC 2: Huấn luyện GNN
+
+    CHỈ chạy khi graph_ready.flag tồn tại (đã build graph ở Bước 1).
+
+    Workflow:
+    1. Kiểm tra graph đã ready chưa
+    2. Load graph đã build
+    3. Train GNN Heterogeneous model
+    4. Evaluate và in metrics
+    5. Lưu model
+
+    Response:
+    - Metrics: Accuracy, Precision, Recall, F1, ROC-AUC
+    - Training history
+    - Confusion matrix
+    """
+    logger.info("="*60)
+    logger.info("[GNN-TRAIN] 🎯 BẮT ĐẦU HUẤN LUYỆN GNN")
+    logger.info("="*60)
+
+    try:
+        # Import pipeline để kiểm tra graph
+        from utils.gnn_data_pipeline import GNNDataPipeline
+
+        # Kiểm tra graph đã ready chưa
+        if not GNNDataPipeline.is_graph_ready():
+            logger.error("[GNN-TRAIN] Graph chưa được build!")
+            return jsonify({
+                'success': False,
+                'error': 'Mạng lưới GNN chưa được tạo! Vui lòng bấm "🕸️ Tạo mạng lưới GNN" trước.',
+                'graph_ready': False,
+                'hint': 'Upload các file dữ liệu GNN và bấm nút "Tạo mạng lưới GNN" để build graph trước khi train.'
+            }), 400
+
+        # Load graph
+        logger.info("[GNN-TRAIN] Đang load graph đã build...")
+        data, metadata = GNNDataPipeline.load_saved_graph()
+
+        if data is None:
+            logger.error("[GNN-TRAIN] Không thể load graph!")
+            return jsonify({
+                'success': False,
+                'error': 'Không thể load mạng lưới GNN. Vui lòng tạo lại.',
+                'graph_ready': False
+            }), 500
+
+        logger.info(f"[GNN-TRAIN] Graph loaded: {metadata}")
+
+        # Import và train model
+        from models.layer2.gnn_hetero_model import GNNHeteroModel
+
+        logger.info("[GNN-TRAIN] Khởi tạo GNN Heterogeneous Model...")
+        model = GNNHeteroModel()
+
+        # Train
+        logger.info("[GNN-TRAIN] Bắt đầu training...")
+        model.fit(data, verbose=True)
+
+        # Evaluate trên test set
+        logger.info("[GNN-TRAIN] Đánh giá trên test set...")
+        test_metrics = model.evaluate(data, mask_type='test', verbose=True)
+
+        # Evaluate trên validation set
+        val_metrics = model.evaluate(data, mask_type='val', verbose=False)
+
+        # Lưu model
+        model.save()
+        logger.info("[GNN-TRAIN] Đã lưu model!")
+
+        # Chuẩn bị response
+        training_info = {
+            'epochs_trained': len(model.history['train_loss']),
+            'final_train_auc': float(model.history['train_auc'][-1]) if model.history['train_auc'] else 0,
+            'final_val_auc': float(model.history['val_auc'][-1]) if model.history['val_auc'] else 0,
+            'best_val_auc': float(max(model.history['val_auc'])) if model.history['val_auc'] else 0,
+            'hidden_channels': model.hidden_channels,
+            'num_layers': model.num_layers,
+            'learning_rate': model.learning_rate,
+        }
+
+        graph_info = {
+            'node_types': list(data.node_types),
+            'edge_types': [str(et) for et in data.edge_types],
+            'target_edge_type': str(model.target_edge_type),
+        }
+
+        logger.info("="*60)
+        logger.info("[GNN-TRAIN] ✅ HUẤN LUYỆN GNN THÀNH CÔNG!")
+        logger.info("="*60)
+
+        return jsonify({
+            'success': True,
+            'message': '✅ Huấn luyện GNN thành công!',
+            'model': 'gnn_hetero',
+            'training_info': training_info,
+            'graph_info': graph_info,
+            'metrics': {
+                'test': test_metrics,
+                'validation': val_metrics
+            },
+            'timestamp': datetime.now().isoformat()
+        })
+
+    except Exception as e:
+        error_msg = str(e)
+        error_traceback = traceback.format_exc()
+        logger.error(f"[GNN-TRAIN] LỖI: {error_msg}")
+        logger.error(f"[GNN-TRAIN] Traceback:\n{error_traceback}")
+
+        return jsonify({
+            'success': False,
+            'error': f'Huấn luyện GNN thất bại: {error_msg}',
+            'details': error_traceback
+        }), 500
+
+
+@api.route('/train/gnn/status', methods=['GET'])
+def get_gnn_status():
+    """
+    Kiểm tra trạng thái GNN graph
+
+    Returns:
+    - graph_ready: Boolean - graph đã được build chưa
+    - metadata: Thông tin graph nếu đã build
+    """
+    try:
+        from utils.gnn_data_pipeline import GNNDataPipeline, GRAPH_METADATA_PATH
+
+        is_ready = GNNDataPipeline.is_graph_ready()
+
+        response = {
+            'success': True,
+            'graph_ready': is_ready,
+            'timestamp': datetime.now().isoformat()
+        }
+
+        if is_ready and os.path.exists(GRAPH_METADATA_PATH):
+            import json
+            with open(GRAPH_METADATA_PATH, 'r', encoding='utf-8') as f:
+                response['metadata'] = json.load(f)
+
+        return jsonify(response)
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@api.route('/train/gnn/clear', methods=['POST'])
+def clear_gnn_graph():
+    """
+    Xóa graph GNN đã build (để build lại với dữ liệu mới)
+    """
+    try:
+        from utils.gnn_data_pipeline import GNNDataPipeline
+
+        GNNDataPipeline.clear_graph()
+
+        return jsonify({
+            'success': True,
+            'message': 'Đã xóa mạng lưới GNN. Bạn có thể tạo lại với dữ liệu mới.',
+            'timestamp': datetime.now().isoformat()
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+# ===== LEGACY GNN ENDPOINT (giữ lại để tương thích) =====
+
 @api.route('/train/gnn', methods=['POST'])
 def train_gnn():
-    """Train GNN model với file upload"""
+    """Train GNN model với file upload (LEGACY - dùng cho file CSV đơn giản)"""
     logger.info("[GNN] Bắt đầu training...")
 
     try:
