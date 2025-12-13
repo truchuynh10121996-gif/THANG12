@@ -11,10 +11,13 @@ LSTM học "nhịp điệu" chi tiêu của user và phát hiện khi pattern b�
 Nhược điểm:
 - Cần đủ dữ liệu lịch sử
 - Training chậm hơn các models khác
+
+UPDATE 2025: Tích hợp Threshold Optimizer cho ngân hàng Việt Nam
 """
 
 import os
 import sys
+import json
 import numpy as np
 import pandas as pd
 from typing import Dict, Tuple, List, Optional
@@ -24,12 +27,55 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler
 import joblib
+import logging
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s | %(levelname)s | %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 # Import config
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from config import get_config
 
 config = get_config()
+
+# Import threshold optimizer (lazy import để tránh circular import)
+def _get_threshold_optimizer():
+    """Lazy import threshold optimizer"""
+    try:
+        from utils.threshold_optimizer import (
+            recommend_threshold,
+            log_threshold_analysis,
+            print_summary_table,
+            compute_metrics_at_threshold,
+            compute_roc_curve,
+            compute_precision_recall_curve,
+            get_tier_distribution,
+            classify_transactions,
+            FraudThresholdClassifier,
+            DEFAULT_THRESHOLDS,
+            BUSINESS_CONSTRAINTS
+        )
+        return {
+            'recommend_threshold': recommend_threshold,
+            'log_threshold_analysis': log_threshold_analysis,
+            'print_summary_table': print_summary_table,
+            'compute_metrics_at_threshold': compute_metrics_at_threshold,
+            'compute_roc_curve': compute_roc_curve,
+            'compute_precision_recall_curve': compute_precision_recall_curve,
+            'get_tier_distribution': get_tier_distribution,
+            'classify_transactions': classify_transactions,
+            'FraudThresholdClassifier': FraudThresholdClassifier,
+            'DEFAULT_THRESHOLDS': DEFAULT_THRESHOLDS,
+            'BUSINESS_CONSTRAINTS': BUSINESS_CONSTRAINTS
+        }
+    except ImportError as e:
+        logger.warning(f"Could not import threshold_optimizer: {e}")
+        return None
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -158,21 +204,34 @@ class LSTMSequenceModel:
         self.sequence_length = self.config.get('sequence_length', 10)
         self.history = {'train_loss': [], 'val_loss': [], 'train_acc': [], 'val_acc': []}
 
+        # Threshold optimization results (NEW)
+        self.threshold_config = None
+        self.optimal_threshold = 0.5  # Default
+        self.threshold_optimizer_result = None
+
     def fit(
         self,
         sequences: np.ndarray,
         labels: np.ndarray,
         validation_split: float = 0.1,
-        verbose: bool = True
+        verbose: bool = True,
+        optimize_threshold: bool = True,
+        threshold_strategy: str = 'balanced'
     ):
         """
-        Train LSTM model
+        Train LSTM model với tùy chọn tối ưu threshold tự động
 
         Args:
             sequences: Shape (num_samples, sequence_length, num_features)
             labels: Shape (num_samples,)
             validation_split: Tỷ lệ validation
             verbose: In thông tin
+            optimize_threshold: Tự động tối ưu threshold sau khi train (NEW)
+            threshold_strategy: Chiến lược tối ưu threshold (NEW)
+                - 'balanced': Recall >= 70%, Precision >= 5%
+                - 'recall_focused': Recall >= 80%, Precision >= 3%
+                - 'precision_focused': Recall >= 50%, Precision >= 10%
+                - 'fpr_controlled': FPR <= 30%, Recall >= 60%
         """
         if verbose:
             print("[LSTM] Bắt đầu training...")
@@ -311,6 +370,23 @@ class LSTMSequenceModel:
         if verbose:
             print("[LSTM] Training hoàn tất!")
 
+        # ========================================================
+        # THRESHOLD OPTIMIZATION (NEW FEATURE)
+        # ========================================================
+        if optimize_threshold:
+            if verbose:
+                print("\n" + "=" * 60)
+                print("[LSTM] BẮT ĐẦU THRESHOLD OPTIMIZATION")
+                print("=" * 60)
+
+            # Tối ưu threshold trên validation set
+            self._run_threshold_optimization(
+                X_val=X_val,
+                y_val=y_val,
+                strategy=threshold_strategy,
+                verbose=verbose
+            )
+
     def predict(self, sequences: np.ndarray, threshold: float = 0.5) -> np.ndarray:
         """
         Dự đoán fraud cho sequences
@@ -396,7 +472,7 @@ class LSTMSequenceModel:
         return metrics
 
     def save(self, path: str = None):
-        """Lưu model"""
+        """Lưu model và threshold config"""
         if path is None:
             path = os.path.join(config.SAVED_MODELS_DIR, 'lstm.pth')
 
@@ -407,14 +483,24 @@ class LSTMSequenceModel:
             'scaler': self.scaler,
             'config': self.config,
             'history': self.history,
-            'is_fitted': self.is_fitted
+            'is_fitted': self.is_fitted,
+            # Threshold optimization data (NEW)
+            'optimal_threshold': self.optimal_threshold,
+            'threshold_config': self.threshold_config
         }
 
         torch.save(save_data, path)
         print(f"[LSTM] Đã lưu model: {path}")
 
+        # Lưu threshold config riêng (JSON)
+        if self.threshold_config is not None:
+            threshold_path = path.replace('.pth', '_threshold.json')
+            with open(threshold_path, 'w', encoding='utf-8') as f:
+                json.dump(self.threshold_config, f, indent=2, ensure_ascii=False)
+            print(f"[LSTM] Đã lưu threshold config: {threshold_path}")
+
     def load(self, path: str = None):
-        """Load model"""
+        """Load model và threshold config"""
         if path is None:
             path = os.path.join(config.SAVED_MODELS_DIR, 'lstm.pth')
 
@@ -428,9 +514,14 @@ class LSTMSequenceModel:
         self.history = save_data['history']
         self.is_fitted = save_data['is_fitted']
 
+        # Load threshold config (NEW)
+        self.optimal_threshold = save_data.get('optimal_threshold', 0.5)
+        self.threshold_config = save_data.get('threshold_config', None)
+
         # Rebuild model (cần biết input_size)
         # Sẽ được set lại khi sử dụng
         print(f"[LSTM] Đã load model: {path}")
+        print(f"[LSTM] Optimal threshold: {self.optimal_threshold:.4f}")
 
     def explain_prediction(
         self,
@@ -463,8 +554,185 @@ class LSTMSequenceModel:
 
         return {
             'fraud_probability': float(proba),
-            'prediction': 'fraud' if proba >= 0.5 else 'normal',
+            'prediction': 'fraud' if proba >= self.optimal_threshold else 'normal',
             'attention_weights': attention.tolist(),
             'most_important_positions': np.argsort(attention)[::-1][:3].tolist(),
             'sequence_length': len(attention)
         }
+
+    # ========================================================================
+    # THRESHOLD OPTIMIZATION METHODS (NEW)
+    # ========================================================================
+
+    def _run_threshold_optimization(
+        self,
+        X_val: np.ndarray,
+        y_val: np.ndarray,
+        strategy: str = 'balanced',
+        verbose: bool = True
+    ):
+        """
+        Chạy threshold optimization trên validation set
+
+        Args:
+            X_val: Validation sequences (đã scale)
+            y_val: Validation labels
+            strategy: Chiến lược tối ưu
+            verbose: In chi tiết
+        """
+        optimizer = _get_threshold_optimizer()
+
+        if optimizer is None:
+            logger.warning("[LSTM] Threshold optimizer not available. Using default threshold 0.5")
+            return
+
+        # Predict probabilities trên validation set
+        self.model.eval()
+        with torch.no_grad():
+            X_tensor = torch.FloatTensor(X_val).to(device)
+            y_pred_prob = self.model(X_tensor).cpu().numpy()
+
+        if verbose:
+            print(f"\n[THRESHOLD] Đang tối ưu threshold trên {len(y_val):,} validation samples...")
+            print(f"  - Fraud ratio: {y_val.mean()*100:.2f}%")
+            print(f"  - Prob range: [{y_pred_prob.min():.4f}, {y_pred_prob.max():.4f}]")
+            print(f"  - Strategy: {strategy}")
+
+        # Tính ROC-AUC và AP
+        fpr, tpr, _, auc = optimizer['compute_roc_curve'](y_val, y_pred_prob)
+        prec, rec, _, ap = optimizer['compute_precision_recall_curve'](y_val, y_pred_prob)
+
+        if verbose:
+            print(f"\n  Model Performance:")
+            print(f"    - ROC-AUC: {auc:.4f}")
+            print(f"    - Average Precision: {ap:.4f}")
+
+        # Log threshold analysis
+        if verbose:
+            print("\n" + "-" * 50)
+            print("  PHÂN TÍCH THRESHOLD CHI TIẾT")
+            print("-" * 50)
+            optimizer['log_threshold_analysis'](y_val, y_pred_prob)
+
+        # Recommend threshold
+        result = optimizer['recommend_threshold'](y_val, y_pred_prob, strategy=strategy)
+
+        self.threshold_optimizer_result = result
+        self.optimal_threshold = result['recommended_threshold']
+
+        if verbose:
+            print("\n" + "-" * 50)
+            print("  THRESHOLD ĐỀ XUẤT")
+            print("-" * 50)
+            print(f"\n  ✅ Recommended Threshold: {self.optimal_threshold:.4f}")
+
+            if result['metrics'] is not None:
+                m = result['metrics']
+                print(f"     - Recall: {m.recall:.2%}")
+                print(f"     - Precision: {m.precision:.2%}")
+                print(f"     - F1: {m.f1:.4f}")
+                print(f"     - FPR: {m.fpr:.2%}")
+
+            if result['warnings']:
+                print("\n  ⚠️ Warnings:")
+                for warn in result['warnings']:
+                    print(f"     - {warn}")
+
+        # Print summary table
+        if verbose:
+            print("\n" + "-" * 50)
+            print("  BẢNG SUMMARY 3 MỨC THRESHOLD")
+            print("-" * 50)
+            optimizer['print_summary_table'](y_val, y_pred_prob)
+
+        # Tier distribution
+        tier_dist = optimizer['get_tier_distribution'](y_pred_prob, y_val)
+
+        if verbose:
+            print("\n  PHÂN BỔ THEO TIER:")
+            print(tier_dist.to_string(index=False))
+
+        # Lưu threshold config
+        self.threshold_config = {
+            'optimal_threshold': self.optimal_threshold,
+            'strategy': strategy,
+            'roc_auc': auc,
+            'average_precision': ap,
+            'thresholds': optimizer['DEFAULT_THRESHOLDS'],
+            'tier_distribution': tier_dist.to_dict('records')
+        }
+
+        if result['metrics'] is not None:
+            self.threshold_config['metrics'] = result['metrics'].to_dict()
+
+        if verbose:
+            print("\n" + "=" * 60)
+            print("[LSTM] THRESHOLD OPTIMIZATION HOÀN TẤT!")
+            print(f"       Optimal threshold: {self.optimal_threshold:.4f}")
+            print("=" * 60)
+
+    def get_threshold_config(self) -> Optional[Dict]:
+        """
+        Lấy threshold config đã optimize
+
+        Returns:
+            Dict threshold config hoặc None nếu chưa optimize
+        """
+        return self.threshold_config
+
+    def set_threshold(self, threshold: float):
+        """
+        Set threshold thủ công
+
+        Args:
+            threshold: Giá trị threshold mới (0-1)
+        """
+        if not 0 <= threshold <= 1:
+            raise ValueError(f"Threshold phải trong khoảng [0, 1], got {threshold}")
+
+        self.optimal_threshold = threshold
+        logger.info(f"[LSTM] Threshold set to: {threshold:.4f}")
+
+    def classify_with_tiers(
+        self,
+        sequences: np.ndarray
+    ) -> Tuple[np.ndarray, pd.DataFrame]:
+        """
+        Phân loại giao dịch vào các risk tiers
+
+        Args:
+            sequences: Input sequences
+
+        Returns:
+            Tuple (risk_tiers array, DataFrame chi tiết)
+        """
+        optimizer = _get_threshold_optimizer()
+
+        if optimizer is None:
+            raise RuntimeError("Threshold optimizer not available")
+
+        proba = self.predict_proba(sequences)
+
+        risk_tiers, details = optimizer['classify_transactions'](
+            proba,
+            return_details=True
+        )
+
+        return risk_tiers, details
+
+    def get_production_classifier(self) -> object:
+        """
+        Lấy FraudThresholdClassifier để dùng trong production
+
+        Returns:
+            FraudThresholdClassifier instance
+        """
+        optimizer = _get_threshold_optimizer()
+
+        if optimizer is None:
+            raise RuntimeError("Threshold optimizer not available")
+
+        return optimizer['FraudThresholdClassifier'](
+            thresholds=optimizer['DEFAULT_THRESHOLDS'],
+            default_threshold=self.optimal_threshold
+        )
