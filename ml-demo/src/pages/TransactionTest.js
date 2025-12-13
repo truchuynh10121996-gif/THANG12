@@ -99,9 +99,37 @@ function TransactionTest() {
     transaction_type: 'transfer',
     channel: 'mobile_app',
     hour: new Date().getHours(),
-    recipient_id: '',
+    recipient_name: '',
+    recipient_account: '',
+    recipient_bank: '',
     is_international: false,
   });
+
+  // Danh sách ngân hàng Việt Nam
+  const VIETNAM_BANKS = [
+    { code: 'VCB', name: 'Vietcombank' },
+    { code: 'TCB', name: 'Techcombank' },
+    { code: 'BIDV', name: 'BIDV' },
+    { code: 'VTB', name: 'Vietinbank' },
+    { code: 'ACB', name: 'ACB' },
+    { code: 'MBB', name: 'MB Bank' },
+    { code: 'VPB', name: 'VPBank' },
+    { code: 'TPB', name: 'TPBank' },
+    { code: 'STB', name: 'Sacombank' },
+    { code: 'HDB', name: 'HDBank' },
+    { code: 'SHB', name: 'SHB' },
+    { code: 'MSB', name: 'MSB' },
+    { code: 'OCB', name: 'OCB' },
+    { code: 'LPB', name: 'LienVietPostBank' },
+    { code: 'AGRB', name: 'Agribank' },
+    { code: 'SCB', name: 'SCB' },
+    { code: 'NAB', name: 'Nam A Bank' },
+    { code: 'BAB', name: 'Bac A Bank' },
+    { code: 'MOMO', name: 'Ví MoMo' },
+    { code: 'ZALO', name: 'ZaloPay' },
+    { code: 'SHOPEEPAY', name: 'ShopeePay' },
+    { code: 'GRABPAY', name: 'GrabPay' },
+  ];
 
   // Kết quả phân tích
   const [analysisResult, setAnalysisResult] = useState(null);
@@ -602,17 +630,61 @@ function TransactionTest() {
             </FormControl>
           </Grid>
 
+          {/* Thông tin người nhận */}
+          <Grid item xs={12}>
+            <Divider sx={{ my: 1 }}>
+              <Chip label="Thông tin người nhận" size="small" />
+            </Divider>
+          </Grid>
+
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              label="Họ tên người nhận"
+              name="recipient_name"
+              value={formData.recipient_name}
+              onChange={handleChange}
+              size="small"
+              placeholder="VD: Nguyễn Văn A"
+            />
+          </Grid>
+
           <Grid item xs={6}>
             <TextField
               fullWidth
-              label="ID Người nhận"
-              name="recipient_id"
-              value={formData.recipient_id}
+              label="Số tài khoản"
+              name="recipient_account"
+              value={formData.recipient_account}
               onChange={handleChange}
               size="small"
-              placeholder="VD: RCP_001"
-              helperText="Để trống nếu không có"
+              placeholder="VD: 1234567890"
             />
+          </Grid>
+
+          <Grid item xs={6}>
+            <FormControl fullWidth size="small">
+              <InputLabel>Ngân hàng nhận</InputLabel>
+              <Select
+                name="recipient_bank"
+                value={formData.recipient_bank}
+                onChange={handleChange}
+                label="Ngân hàng nhận"
+              >
+                <MenuItem value="">-- Chọn ngân hàng --</MenuItem>
+                {VIETNAM_BANKS.map((bank) => (
+                  <MenuItem key={bank.code} value={bank.code}>
+                    {bank.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Grid>
+
+          {/* Thông tin bổ sung */}
+          <Grid item xs={12}>
+            <Divider sx={{ my: 1 }}>
+              <Chip label="Thông tin bổ sung" size="small" />
+            </Divider>
           </Grid>
 
           <Grid item xs={6}>
@@ -628,7 +700,7 @@ function TransactionTest() {
             />
           </Grid>
 
-          <Grid item xs={12}>
+          <Grid item xs={6}>
             <FormControl fullWidth size="small">
               <InputLabel>Giao dịch quốc tế</InputLabel>
               <Select

@@ -288,12 +288,46 @@ class CustomerDataService:
         amount_to_avg_ratio = amount / avg_amount if avg_amount > 0 else 1
         amount_to_income_ratio = amount / income if income > 0 else 1
 
-        # Kiểm tra người nhận mới
-        recipient_id = transaction_data.get('recipient_id', '')
+        # Thông tin người nhận từ form mới
+        recipient_name = transaction_data.get('recipient_name', '')
+        recipient_account = transaction_data.get('recipient_account', '')
+        recipient_bank = transaction_data.get('recipient_bank', '')
+
+        # Tạo recipient_id từ số tài khoản + ngân hàng (để kiểm tra người nhận mới)
+        recipient_id = f"{recipient_account}_{recipient_bank}" if recipient_account and recipient_bank else ''
+
+        # Kiểm tra người nhận mới dựa vào tên hoặc số tài khoản
         is_new_recipient = 1
-        if len(transactions) > 0 and recipient_id:
-            known_recipients = transactions['recipient_id'].unique().tolist()
-            is_new_recipient = 0 if recipient_id in known_recipients else 1
+        if len(transactions) > 0:
+            # Kiểm tra tên người nhận đã giao dịch trước đó
+            if 'ten_nguoi_nhan' in transactions.columns and recipient_name:
+                known_names = transactions['ten_nguoi_nhan'].dropna().unique().tolist()
+                if recipient_name in known_names:
+                    is_new_recipient = 0
+
+            # Kiểm tra số tài khoản + ngân hàng đã giao dịch trước đó
+            if is_new_recipient == 1 and 'recipient_id' in transactions.columns and recipient_id:
+                known_recipients = transactions['recipient_id'].dropna().unique().tolist()
+                if recipient_id in known_recipients:
+                    is_new_recipient = 0
+
+        # Bank risk encoding - một số ngân hàng/ví có rủi ro cao hơn
+        bank_risk_map = {
+            # Ngân hàng lớn - rủi ro thấp
+            'VCB': 0, 'BIDV': 0, 'VTB': 0, 'AGRB': 0,
+            # Ngân hàng trung bình
+            'TCB': 1, 'ACB': 1, 'MBB': 1, 'VPB': 1, 'STB': 1, 'SHB': 1,
+            'TPB': 1, 'HDB': 1, 'MSB': 1, 'OCB': 1, 'LPB': 1,
+            # Ngân hàng nhỏ - rủi ro cao hơn một chút
+            'SCB': 2, 'NAB': 2, 'BAB': 2,
+            # Ví điện tử - cần đánh giá kỹ hơn
+            'MOMO': 2, 'ZALO': 2, 'SHOPEEPAY': 2, 'GRABPAY': 2,
+        }
+        recipient_bank_risk = bank_risk_map.get(recipient_bank, 1)
+
+        # Kiểm tra số tài khoản bất thường (độ dài, format)
+        account_length = len(recipient_account) if recipient_account else 0
+        is_unusual_account = 1 if account_length > 0 and (account_length < 6 or account_length > 20) else 0
 
         # Transaction type encoding
         tx_type_map = {
@@ -359,14 +393,26 @@ class CustomerDataService:
 
             # Recipient features
             'recipient_id': recipient_id,
+            'recipient_name': recipient_name,
+            'recipient_account': recipient_account,
+            'recipient_bank': recipient_bank,
+            'recipient_bank_risk': recipient_bank_risk,
             'is_new_recipient': is_new_recipient,
+            'is_unusual_account': is_unusual_account,
 
             # Other flags
             'is_international': int(transaction_data.get('is_international', False)),
 
             # Raw behavioral for response
             '_behavioral_features': behavioral,
-            '_profile': profile
+            '_profile': profile,
+            '_recipient_info': {
+                'name': recipient_name,
+                'account': recipient_account,
+                'bank': recipient_bank,
+                'bank_risk': recipient_bank_risk,
+                'is_new': is_new_recipient,
+            }
         }
 
         return prepared_data

@@ -148,6 +148,9 @@ class FraudDetectionPipeline:
             transaction_data.get('account_age_days', 0),
             transaction_data.get('amount_to_avg_ratio', 1),
             transaction_data.get('is_international', 0),
+            # Recipient features mới
+            transaction_data.get('recipient_bank_risk', 1),
+            transaction_data.get('is_unusual_account', 0),
         ]
         return np.array(features).reshape(1, -1)
 
@@ -361,13 +364,41 @@ class FraudDetectionPipeline:
                 'importance': 'medium'
             })
 
-        # Phân tích người nhận
+        # Phân tích người nhận (với thông tin chi tiết từ form mới)
+        recipient_info = transaction_data.get('_recipient_info', {})
+        recipient_name = recipient_info.get('name') or transaction_data.get('recipient_name', '')
+        recipient_bank = recipient_info.get('bank') or transaction_data.get('recipient_bank', '')
+        recipient_bank_risk = transaction_data.get('recipient_bank_risk', 1)
+        is_unusual_account = transaction_data.get('is_unusual_account', 0)
+
         if is_new_recipient:
+            if recipient_name:
+                risk_factors.append({
+                    'factor': f'Người nhận "{recipient_name}" là đối tác mới (chưa giao dịch trước đó)',
+                    'importance': 'medium'
+                })
+            else:
+                risk_factors.append({
+                    'factor': 'Người nhận là đối tác mới',
+                    'importance': 'medium'
+                })
+            recommendations.append('Xác minh thông tin người nhận trước khi chuyển tiền')
+
+        # Kiểm tra ngân hàng/ví điện tử
+        if recipient_bank_risk >= 2:
+            bank_name = recipient_bank or 'ví điện tử/ngân hàng nhỏ'
             risk_factors.append({
-                'factor': 'Người nhận là đối tác mới',
+                'factor': f'Chuyển tiền đến {bank_name} - cần xác minh kỹ hơn',
                 'importance': 'medium'
             })
-            recommendations.append('Xác minh thông tin người nhận')
+
+        # Kiểm tra số tài khoản bất thường
+        if is_unusual_account:
+            risk_factors.append({
+                'factor': 'Số tài khoản có định dạng không bình thường',
+                'importance': 'medium'
+            })
+            recommendations.append('Kiểm tra lại số tài khoản người nhận')
 
         # Giao dịch quốc tế
         if is_international:
