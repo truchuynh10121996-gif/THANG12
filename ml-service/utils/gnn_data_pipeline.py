@@ -474,22 +474,51 @@ class GNNDataPipeline:
         for node_type in node_types:
             type_nodes = nodes_df[nodes_df[type_col] == node_type] if type_col in nodes_df.columns else nodes_df
 
-            # Tạo mapping node_id -> index
-            self.node_mapping[node_type] = {}
-            self.reverse_mapping[node_type] = {}
-
-            for idx, row in enumerate(type_nodes[node_id_col]):
-                node_id_str = str(row)
-                self.node_mapping[node_type][node_id_str] = idx
-                self.reverse_mapping[node_type][idx] = node_id_str
-
             # Lấy features cho node type này
             # Ưu tiên file riêng (nodes_user.csv, nodes_device.csv, ...)
             specific_nodes_key = f'nodes_{node_type}'
             if specific_nodes_key in self.data:
                 feature_df = self.data[specific_nodes_key]
+                # Xác định cột node_id trong feature_df
+                feature_node_id_col = None
+                for col in ['node_id', 'id', 'node']:
+                    if col in feature_df.columns:
+                        feature_node_id_col = col
+                        break
+
+                if feature_node_id_col:
+                    # Lấy tập node_ids có trong cả type_nodes và feature_df
+                    type_node_ids = set(type_nodes[node_id_col].astype(str))
+                    feature_node_ids = set(feature_df[feature_node_id_col].astype(str))
+                    common_node_ids = type_node_ids.intersection(feature_node_ids)
+
+                    self.log(f"  [DEBUG] {node_type}: type_nodes={len(type_node_ids)}, feature_df={len(feature_node_ids)}, common={len(common_node_ids)}")
+
+                    # Sử dụng feature_df làm source of truth
+                    # Tạo mapping chỉ cho các nodes có trong feature_df
+                    self.node_mapping[node_type] = {}
+                    self.reverse_mapping[node_type] = {}
+
+                    for idx, node_id in enumerate(feature_df[feature_node_id_col].astype(str)):
+                        self.node_mapping[node_type][node_id] = idx
+                        self.reverse_mapping[node_type][idx] = node_id
+                else:
+                    # Fallback nếu không tìm thấy cột node_id trong feature_df
+                    self.node_mapping[node_type] = {}
+                    self.reverse_mapping[node_type] = {}
+                    for idx, row in enumerate(type_nodes[node_id_col]):
+                        node_id_str = str(row)
+                        self.node_mapping[node_type][node_id_str] = idx
+                        self.reverse_mapping[node_type][idx] = node_id_str
             else:
                 feature_df = type_nodes
+                # Tạo mapping node_id -> index từ type_nodes
+                self.node_mapping[node_type] = {}
+                self.reverse_mapping[node_type] = {}
+                for idx, row in enumerate(type_nodes[node_id_col]):
+                    node_id_str = str(row)
+                    self.node_mapping[node_type][node_id_str] = idx
+                    self.reverse_mapping[node_type][idx] = node_id_str
 
             # Trích xuất features (loại bỏ cột ID và type)
             exclude_cols = [node_id_col, type_col, 'node_id', 'id', 'type', 'node_type']
@@ -506,13 +535,27 @@ class GNNDataPipeline:
                 features = features.fillna(0).values
             else:
                 # Nếu không có features, tạo random features (placeholder)
-                features = np.random.randn(len(type_nodes), 16).astype(np.float32)
+                features = np.random.randn(len(feature_df), 16).astype(np.float32)
+
+            # Đảm bảo num_nodes và features.shape[0] khớp với số nodes trong mapping
+            num_nodes = len(self.node_mapping[node_type])
+
+            # Validate: số features rows phải bằng số nodes trong mapping
+            if features.shape[0] != num_nodes:
+                self.log(f"  ⚠️ {node_type}: Mismatch! features={features.shape[0]}, mapping={num_nodes}. Adjusting...", level='warning')
+                # Truncate features nếu nhiều hơn, hoặc pad nếu ít hơn
+                if features.shape[0] > num_nodes:
+                    features = features[:num_nodes]
+                else:
+                    # Pad với zeros
+                    padding = np.zeros((num_nodes - features.shape[0], features.shape[1]), dtype=np.float32)
+                    features = np.vstack([features, padding])
 
             # Thêm vào HeteroData
             data[node_type].x = torch.FloatTensor(features)
-            data[node_type].num_nodes = len(type_nodes)
+            data[node_type].num_nodes = num_nodes
 
-            self.log(f"  ✅ {node_type}: {len(type_nodes)} nodes, {features.shape[1]} features")
+            self.log(f"  ✅ {node_type}: {num_nodes} nodes, {features.shape[1]} features")
 
     def _build_edges(self, data: HeteroData):
         """Build edges cho heterogeneous graph"""
@@ -545,8 +588,10 @@ class GNNDataPipeline:
         src_indices = []
         dst_indices = []
         edge_ids = []
+        valid_row_indices = []  # Track row indices for edge features
 
-        for idx, row in edges_transfer.iterrows():
+        skipped_edges = 0
+        for df_idx, row in edges_transfer.iterrows():
             src_id = str(row[src_col])
             dst_id = str(row[dst_col])
             eid = str(row[edge_id_col])
@@ -557,38 +602,92 @@ class GNNDataPipeline:
 
             # Đảm bảo node types tồn tại trong mapping
             if src_type not in self.node_mapping:
+                skipped_edges += 1
                 continue
             if dst_type not in self.node_mapping:
-                # Nếu dst_type không tồn tại, sử dụng src_type
-                dst_type = src_type
+                # Bỏ qua edge này vì dst_type không tồn tại
+                skipped_edges += 1
+                continue
 
-            if src_id in self.node_mapping.get(src_type, {}) and dst_id in self.node_mapping.get(dst_type, {}):
-                src_idx = self.node_mapping[src_type][src_id]
-                dst_idx = self.node_mapping[dst_type][dst_id]
+            # Kiểm tra node_id có trong mapping không
+            if src_id not in self.node_mapping.get(src_type, {}):
+                skipped_edges += 1
+                continue
+            if dst_id not in self.node_mapping.get(dst_type, {}):
+                skipped_edges += 1
+                continue
 
-                src_indices.append(src_idx)
-                dst_indices.append(dst_idx)
-                edge_ids.append(eid)
+            src_idx = self.node_mapping[src_type][src_id]
+            dst_idx = self.node_mapping[dst_type][dst_id]
 
-                self.edge_mapping[eid] = len(edge_ids) - 1
+            # Validate indices không vượt quá số nodes
+            # (để tránh lỗi "dim_size mismatch" khi training)
+            # Số nodes được xác định bởi features tensor shape
+            src_indices.append(src_idx)
+            dst_indices.append(dst_idx)
+            edge_ids.append(eid)
+            valid_row_indices.append(df_idx)
+
+            self.edge_mapping[eid] = len(edge_ids) - 1
+
+        if skipped_edges > 0:
+            self.log(f"  ⚠️ Skipped {skipped_edges} edges do missing nodes", level='warning')
 
         if src_indices:
             # Xác định edge type tuple
             # Ưu tiên ('user', 'transfer', 'recipient') nếu có đủ node types
             if 'user' in self.node_mapping and 'recipient' in self.node_mapping:
                 edge_type = ('user', 'transfer', 'recipient')
+                src_node_type = 'user'
+                dst_node_type = 'recipient'
             else:
                 # Fallback: sử dụng node type đầu tiên
                 first_type = list(self.node_mapping.keys())[0]
                 edge_type = (first_type, 'transfer', first_type)
+                src_node_type = first_type
+                dst_node_type = first_type
+
+            # Validation: đảm bảo indices không vượt quá số nodes
+            src_num_nodes = len(self.node_mapping[src_node_type])
+            dst_num_nodes = len(self.node_mapping[dst_node_type])
+
+            max_src_idx = max(src_indices) if src_indices else 0
+            max_dst_idx = max(dst_indices) if dst_indices else 0
+
+            if max_src_idx >= src_num_nodes or max_dst_idx >= dst_num_nodes:
+                self.log(f"  ⚠️ Filtering invalid edge indices...", level='warning')
+                self.log(f"     max_src_idx={max_src_idx} vs src_num_nodes={src_num_nodes}", level='warning')
+                self.log(f"     max_dst_idx={max_dst_idx} vs dst_num_nodes={dst_num_nodes}", level='warning')
+
+                # Filter out invalid edges
+                valid_src = []
+                valid_dst = []
+                valid_eids = []
+                valid_rows = []
+                for i, (s, d, eid, row_idx) in enumerate(zip(src_indices, dst_indices, edge_ids, valid_row_indices)):
+                    if s < src_num_nodes and d < dst_num_nodes:
+                        valid_src.append(s)
+                        valid_dst.append(d)
+                        valid_eids.append(eid)
+                        valid_rows.append(row_idx)
+
+                src_indices = valid_src
+                dst_indices = valid_dst
+                edge_ids = valid_eids
+                valid_row_indices = valid_rows
+
+                # Rebuild edge_mapping
+                self.edge_mapping = {eid: idx for idx, eid in enumerate(edge_ids)}
+
+                self.log(f"     After filtering: {len(src_indices)} valid edges", level='warning')
 
             data[edge_type].edge_index = torch.LongTensor([src_indices, dst_indices])
 
-            # Thêm edge features nếu có
+            # Thêm edge features nếu có (chỉ lấy các rows hợp lệ)
             feature_cols = [c for c in edges_transfer.columns
                           if c not in [src_col, dst_col, edge_id_col, 'label', 'is_fraud']]
-            if feature_cols:
-                edge_features = edges_transfer[feature_cols].copy()
+            if feature_cols and valid_row_indices:
+                edge_features = edges_transfer.loc[valid_row_indices, feature_cols].copy()
                 for col in edge_features.columns:
                     if edge_features[col].dtype == 'object':
                         edge_features[col] = pd.factorize(edge_features[col])[0]
@@ -625,8 +724,29 @@ class GNNDataPipeline:
 
                     if src_indices:
                         edge_tuple = ('user', edge_type_name, dst_type)
-                        data[edge_tuple].edge_index = torch.LongTensor([src_indices, dst_indices])
-                        self.log(f"  ✅ {edge_tuple}: {len(src_indices)} edges")
+
+                        # Validation: đảm bảo indices không vượt quá số nodes
+                        user_num_nodes = len(self.node_mapping.get('user', {}))
+                        dst_num_nodes = len(self.node_mapping.get(dst_type, {}))
+
+                        max_src_idx = max(src_indices) if src_indices else 0
+                        max_dst_idx = max(dst_indices) if dst_indices else 0
+
+                        if max_src_idx >= user_num_nodes or max_dst_idx >= dst_num_nodes:
+                            self.log(f"  ⚠️ {edge_tuple}: Filtering invalid indices...", level='warning')
+                            valid_src = []
+                            valid_dst = []
+                            for s, d in zip(src_indices, dst_indices):
+                                if s < user_num_nodes and d < dst_num_nodes:
+                                    valid_src.append(s)
+                                    valid_dst.append(d)
+                            src_indices = valid_src
+                            dst_indices = valid_dst
+                            self.log(f"     After filtering: {len(src_indices)} valid edges", level='warning')
+
+                        if src_indices:
+                            data[edge_tuple].edge_index = torch.LongTensor([src_indices, dst_indices])
+                            self.log(f"  ✅ {edge_tuple}: {len(src_indices)} edges")
 
     def _add_labels_and_splits(self, data: HeteroData):
         """Thêm labels và train/val/test splits"""
