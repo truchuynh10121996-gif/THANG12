@@ -121,6 +121,14 @@ class HeteroGNNEncoder(nn.Module):
                     norm_dict[node_type] = nn.BatchNorm1d(hidden_channels)
             self.norms.append(norm_dict)
 
+        # Output projection layers - đảm bảo tất cả node types có cùng output dimension
+        # Dùng cho các node types không nhận messages ở layer cuối
+        self.output_projections = nn.ModuleDict()
+        for node_type in node_types:
+            self.output_projections[node_type] = nn.Linear(hidden_channels, out_channels)
+
+        self.out_channels = out_channels
+
     def forward(self, x_dict: Dict[str, torch.Tensor], edge_index_dict: Dict) -> Dict[str, torch.Tensor]:
         """
         Forward pass
@@ -170,13 +178,18 @@ class HeteroGNNEncoder(nn.Module):
 
             # Merge: keep node types from previous layer if not updated by conv
             # This ensures all node types remain in h_dict
+            is_last_layer = (i == self.num_layers - 1)
+
             for node_type in self.node_types:
                 if node_type in h_dict_new and h_dict_new[node_type] is not None:
                     h_dict[node_type] = h_dict_new[node_type]
                 elif node_type in h_dict_prev:
-                    # Node type didn't receive any messages, keep previous features
-                    # But we need to project to correct dimension if this is not first layer
-                    h_dict[node_type] = h_dict_prev[node_type]
+                    # Node type didn't receive any messages
+                    # Nếu là layer cuối, cần project về out_channels để đảm bảo dimension khớp
+                    if is_last_layer and h_dict_prev[node_type].shape[-1] != self.out_channels:
+                        h_dict[node_type] = self.output_projections[node_type](h_dict_prev[node_type])
+                    else:
+                        h_dict[node_type] = h_dict_prev[node_type]
 
             # Apply normalization và activation
             for node_type in list(h_dict.keys()):
