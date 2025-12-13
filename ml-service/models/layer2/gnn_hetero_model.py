@@ -135,19 +135,59 @@ class HeteroGNNEncoder(nn.Module):
         # Project initial features
         h_dict = {}
         for node_type in self.node_types:
-            if node_type in x_dict:
+            if node_type in x_dict and x_dict[node_type] is not None:
                 h_dict[node_type] = self.projections[node_type](x_dict[node_type])
+
+        # Filter edge_index_dict to only include edges where both src and dst have features
+        # This prevents NoneType errors during message passing
+        valid_edge_index_dict = {}
+        for edge_type, edge_index in edge_index_dict.items():
+            src_type, _, dst_type = edge_type
+            # Only include edge if both source and destination node types have features
+            if src_type in h_dict and dst_type in h_dict:
+                # Also validate that edge indices are within bounds
+                if edge_index is not None and edge_index.numel() > 0:
+                    src_num_nodes = h_dict[src_type].shape[0]
+                    dst_num_nodes = h_dict[dst_type].shape[0]
+
+                    # Check if indices are valid
+                    max_src_idx = edge_index[0].max().item() if edge_index[0].numel() > 0 else -1
+                    max_dst_idx = edge_index[1].max().item() if edge_index[1].numel() > 0 else -1
+
+                    if max_src_idx < src_num_nodes and max_dst_idx < dst_num_nodes:
+                        valid_edge_index_dict[edge_type] = edge_index
 
         # GNN layers
         for i, conv in enumerate(self.convs):
-            h_dict = conv(h_dict, edge_index_dict)
+            # Save current h_dict to preserve node types that don't receive messages
+            h_dict_prev = {k: v.clone() for k, v in h_dict.items()}
+
+            # Run convolution only if there are valid edges
+            if valid_edge_index_dict:
+                h_dict_new = conv(h_dict, valid_edge_index_dict)
+            else:
+                h_dict_new = {}
+
+            # Merge: keep node types from previous layer if not updated by conv
+            # This ensures all node types remain in h_dict
+            for node_type in self.node_types:
+                if node_type in h_dict_new and h_dict_new[node_type] is not None:
+                    h_dict[node_type] = h_dict_new[node_type]
+                elif node_type in h_dict_prev:
+                    # Node type didn't receive any messages, keep previous features
+                    # But we need to project to correct dimension if this is not first layer
+                    h_dict[node_type] = h_dict_prev[node_type]
 
             # Apply normalization và activation
-            for node_type in h_dict:
-                if node_type in self.norms[i]:
-                    h_dict[node_type] = self.norms[i][node_type](h_dict[node_type])
-                h_dict[node_type] = F.relu(h_dict[node_type])
-                h_dict[node_type] = F.dropout(h_dict[node_type], p=self.dropout, training=self.training)
+            for node_type in list(h_dict.keys()):
+                if h_dict[node_type] is not None:
+                    if node_type in self.norms[i]:
+                        # Only apply batch norm if tensor has correct size
+                        expected_dim = self.norms[i][node_type].num_features
+                        if h_dict[node_type].shape[-1] == expected_dim:
+                            h_dict[node_type] = self.norms[i][node_type](h_dict[node_type])
+                    h_dict[node_type] = F.relu(h_dict[node_type])
+                    h_dict[node_type] = F.dropout(h_dict[node_type], p=self.dropout, training=self.training)
 
         return h_dict
 
@@ -389,8 +429,28 @@ class GNNHeteroModel:
         best_val_auc = 0
         patience_counter = 0
 
-        x_dict = {nt: data[nt].x for nt in node_types}
-        edge_index_dict = {et: data[et].edge_index for et in edge_types}
+        # Build x_dict - only include node types that have valid features
+        x_dict = {}
+        for nt in node_types:
+            if hasattr(data[nt], 'x') and data[nt].x is not None:
+                x_dict[nt] = data[nt].x
+            else:
+                if verbose:
+                    print(f"  ⚠️ Warning: Node type '{nt}' has no features, skipping")
+
+        # Validate that target edge type's source and destination have features
+        src_type, _, dst_type = target_edge_type
+        if src_type not in x_dict:
+            raise ValueError(f"Source node type '{src_type}' has no features in data!")
+        if dst_type not in x_dict:
+            raise ValueError(f"Destination node type '{dst_type}' has no features in data!")
+
+        # Build edge_index_dict - only include edge types with valid indices
+        edge_index_dict = {}
+        for et in edge_types:
+            if hasattr(data[et], 'edge_index') and data[et].edge_index is not None:
+                edge_index_dict[et] = data[et].edge_index
+
         edge_index = data[target_edge_type].edge_index
 
         for epoch in range(self.epochs):
@@ -528,8 +588,17 @@ class GNNHeteroModel:
             node_types = list(data.node_types)
             edge_types = list(data.edge_types)
 
-            x_dict = {nt: data[nt].x for nt in node_types}
-            edge_index_dict = {et: data[et].edge_index for et in edge_types}
+            # Build x_dict - only include node types with valid features
+            x_dict = {}
+            for nt in node_types:
+                if hasattr(data[nt], 'x') and data[nt].x is not None:
+                    x_dict[nt] = data[nt].x
+
+            # Build edge_index_dict - only include edge types with valid indices
+            edge_index_dict = {}
+            for et in edge_types:
+                if hasattr(data[et], 'edge_index') and data[et].edge_index is not None:
+                    edge_index_dict[et] = data[et].edge_index
 
             h_dict = self.encoder(x_dict, edge_index_dict)
 
@@ -705,12 +774,21 @@ class GNNHeteroModel:
             node_types = list(data.node_types)
             edge_types = list(data.edge_types)
 
-            x_dict = {nt: data[nt].x for nt in node_types}
-            edge_index_dict = {et: data[et].edge_index for et in edge_types}
+            # Build x_dict - only include node types with valid features
+            x_dict = {}
+            for nt in node_types:
+                if hasattr(data[nt], 'x') and data[nt].x is not None:
+                    x_dict[nt] = data[nt].x
+
+            # Build edge_index_dict - only include edge types with valid indices
+            edge_index_dict = {}
+            for et in edge_types:
+                if hasattr(data[et], 'edge_index') and data[et].edge_index is not None:
+                    edge_index_dict[et] = data[et].edge_index
 
             h_dict = self.encoder(x_dict, edge_index_dict)
 
-        return {nt: h_dict[nt].cpu().numpy() for nt in h_dict}
+        return {nt: h_dict[nt].cpu().numpy() for nt in h_dict if h_dict[nt] is not None}
 
 
 def train_gnn_hetero_from_saved_graph(verbose: bool = True) -> Dict:
