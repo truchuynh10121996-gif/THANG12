@@ -20,6 +20,7 @@ config = get_config()
 
 # Import API routes
 from api.routes import api
+from api.customer_routes import customer_api
 
 
 def create_app():
@@ -54,6 +55,7 @@ def create_app():
 
     # Register blueprints
     app.register_blueprint(api, url_prefix='/api')
+    app.register_blueprint(customer_api, url_prefix='/api')
 
     # Root endpoint
     @app.route('/')
@@ -74,7 +76,11 @@ def create_app():
                 'metrics': '/api/metrics',
                 'explain': '/api/explain',
                 'dashboard_stats': '/api/dashboard/stats',
-                'graph_community': '/api/graph/community'
+                'graph_community': '/api/graph/community',
+                'demo_customers': '/api/demo/customers',
+                'demo_customer_detail': '/api/demo/customers/:id',
+                'demo_transactions': '/api/demo/customers/:id/transactions',
+                'demo_analyze': '/api/demo/analyze'
             },
             'models': {
                 'layer1': ['Isolation Forest', 'LightGBM'],
