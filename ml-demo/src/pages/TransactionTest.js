@@ -2,22 +2,22 @@
  * TransactionTest Page - Kiểm tra giao dịch đơn lẻ
  * ==================================================
  * Trang này cho phép:
- * 1. Chọn khách hàng từ danh sách có sẵn
+ * 1. Chọn 1 trong 3 khách hàng demo (USR_0000001, USR_0000002, USR_0000003)
  * 2. Xem thông tin profile và lịch sử giao dịch của khách hàng
  * 3. Nhập thông tin giao dịch mới
  * 4. Phân tích giao dịch với ML models
  * 5. Xem kết quả và giải thích chi tiết
  *
  * Flow hoạt động:
- * - Người dùng chọn user_id từ dropdown
- * - Frontend gọi API lấy profile + lịch sử giao dịch
+ * - Người dùng chọn user_id từ dropdown (3 khách hàng demo)
+ * - Dữ liệu khách hàng được load từ file local (customerData.js)
  * - Hiển thị thông tin user và lịch sử cho người dùng xem
  * - Người dùng nhập thông tin giao dịch mới
  * - Khi nhấn "Phân tích", gửi request đến ML Service
  * - ML Service tính toán features và trả về kết quả
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Box,
   Grid,
@@ -38,7 +38,6 @@ import {
   ListItem,
   ListItemIcon,
   ListItemText,
-  Autocomplete,
   Paper,
   Table,
   TableBody,
@@ -46,7 +45,6 @@ import {
   TableContainer,
   TableHead,
   TableRow,
-  Skeleton,
   Tooltip,
   IconButton,
 } from '@mui/material';
@@ -65,9 +63,6 @@ import {
 } from '@mui/icons-material';
 import { riskColors, gradients } from '../styles/theme';
 import {
-  getUsers,
-  getUserDetail,
-  getUserTransactions,
   predictSingle,
   explainPrediction,
   formatCurrency,
@@ -78,19 +73,26 @@ import {
   getRiskColor,
 } from '../services/api';
 
+// Import dữ liệu 3 khách hàng demo
+import {
+  DEMO_CUSTOMERS,
+  getDemoUserById,
+  getDemoTransactions,
+  getDemoUserProfile,
+  getDemoBehavioralFeatures,
+} from '../data/customerData';
+
 function TransactionTest() {
   // ===== STATE MANAGEMENT =====
 
-  // Danh sách users và user được chọn
-  const [users, setUsers] = useState([]);
+  // User được chọn (từ 3 khách hàng demo)
+  const [selectedUserId, setSelectedUserId] = useState('');
   const [selectedUser, setSelectedUser] = useState(null);
   const [userProfile, setUserProfile] = useState(null);
   const [userTransactions, setUserTransactions] = useState([]);
   const [behavioralFeatures, setBehavioralFeatures] = useState(null);
 
   // Loading states
-  const [loadingUsers, setLoadingUsers] = useState(true);
-  const [loadingUserData, setLoadingUserData] = useState(false);
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
 
   // Form data cho giao dịch mới
@@ -110,72 +112,43 @@ function TransactionTest() {
   const [explanation, setExplanation] = useState(null);
   const [error, setError] = useState(null);
 
-  // ===== LOAD USERS ON MOUNT =====
-
-  useEffect(() => {
-    loadUsers();
-  }, []);
-
-  // ===== API CALLS =====
+  // ===== HANDLER CHỌN KHÁCH HÀNG DEMO =====
 
   /**
-   * Tải danh sách users
+   * Khi chọn user từ dropdown 3 khách hàng demo
    */
-  const loadUsers = async () => {
-    try {
-      setLoadingUsers(true);
-      const response = await getUsers(100);
-      setUsers(response.users || []);
-    } catch (err) {
-      console.error('Lỗi tải danh sách users:', err);
-      setError('Không thể tải danh sách khách hàng');
-    } finally {
-      setLoadingUsers(false);
-    }
-  };
-
-  /**
-   * Khi chọn user, load profile và lịch sử giao dịch
-   */
-  const handleUserSelect = async (event, user) => {
-    setSelectedUser(user);
+  const handleUserSelect = (event) => {
+    const userId = event.target.value;
+    setSelectedUserId(userId);
     setResult(null);
     setExplanation(null);
+    setError(null);
 
-    if (!user) {
+    if (!userId) {
+      setSelectedUser(null);
       setUserProfile(null);
       setUserTransactions([]);
       setBehavioralFeatures(null);
       return;
     }
 
-    try {
-      setLoadingUserData(true);
-      setError(null);
+    // Load dữ liệu từ file local (3 khách hàng demo)
+    const user = getDemoUserById(userId);
+    const profile = getDemoUserProfile(userId);
+    const transactions = getDemoTransactions(userId);
+    const features = getDemoBehavioralFeatures(userId);
 
-      // Gọi đồng thời cả 2 API
-      const [detailRes, txRes] = await Promise.all([
-        getUserDetail(user.user_id),
-        getUserTransactions(user.user_id, 10),
-      ]);
+    setSelectedUser(user);
+    setUserProfile(profile);
+    setUserTransactions(transactions);
+    setBehavioralFeatures(features);
 
-      setUserProfile(detailRes.profile);
-      setBehavioralFeatures(detailRes.behavioral_features);
-      setUserTransactions(txRes.transactions || []);
-
-      // Cập nhật form với user_id
-      setFormData(prev => ({
-        ...prev,
-        user_id: user.user_id,
-        transaction_id: `TXN_${user.user_id}_${Date.now()}`,
-      }));
-
-    } catch (err) {
-      console.error('Lỗi tải thông tin user:', err);
-      setError('Không thể tải thông tin khách hàng');
-    } finally {
-      setLoadingUserData(false);
-    }
+    // Cập nhật form với user_id
+    setFormData(prev => ({
+      ...prev,
+      user_id: userId,
+      transaction_id: `TXN_${userId}_${Date.now()}`,
+    }));
   };
 
   /**
@@ -267,7 +240,7 @@ function TransactionTest() {
   // ===== RENDER COMPONENTS =====
 
   /**
-   * Render phần chọn khách hàng
+   * Render phần chọn khách hàng (3 khách hàng demo)
    */
   const renderUserSelector = () => (
     <Card sx={{ mb: 3, background: gradients.cardPink, color: '#fff' }}>
@@ -275,49 +248,42 @@ function TransactionTest() {
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
           <PersonIcon />
           <Typography variant="h6" sx={{ fontWeight: 700 }}>
-            Chọn khách hàng
+            Chọn khách hàng demo
           </Typography>
         </Box>
 
-        <Autocomplete
-          options={users}
-          getOptionLabel={(option) => `${option.user_id} - ${option.name}`}
-          value={selectedUser}
-          onChange={handleUserSelect}
-          loading={loadingUsers}
-          renderInput={(params) => (
-            <TextField
-              {...params}
-              placeholder="Tìm kiếm theo ID hoặc tên..."
-              sx={{
-                backgroundColor: 'rgba(255,255,255,0.95)',
-                borderRadius: 2,
-                '& .MuiOutlinedInput-root': {
-                  '& fieldset': { border: 'none' },
-                },
-              }}
-              InputProps={{
-                ...params.InputProps,
-                endAdornment: (
-                  <>
-                    {loadingUsers ? <CircularProgress color="inherit" size={20} /> : null}
-                    {params.InputProps.endAdornment}
-                  </>
-                ),
-              }}
-            />
-          )}
-          renderOption={(props, option) => (
-            <Box component="li" {...props} key={option.user_id}>
-              <Box>
-                <Typography sx={{ fontWeight: 600 }}>{option.name}</Typography>
-                <Typography variant="caption" color="text.secondary">
-                  {option.user_id} • {option.occupation} • KYC: {option.kyc_level}
-                </Typography>
-              </Box>
-            </Box>
-          )}
-        />
+        <Alert severity="info" sx={{ mb: 2, backgroundColor: 'rgba(255,255,255,0.9)' }}>
+          Chọn 1 trong 3 khách hàng demo để kiểm tra giao dịch
+        </Alert>
+
+        <FormControl fullWidth>
+          <Select
+            value={selectedUserId}
+            onChange={handleUserSelect}
+            displayEmpty
+            sx={{
+              backgroundColor: 'rgba(255,255,255,0.95)',
+              borderRadius: 2,
+              '& .MuiOutlinedInput-notchedOutline': { border: 'none' },
+            }}
+          >
+            <MenuItem value="" disabled>
+              -- Chọn khách hàng --
+            </MenuItem>
+            {DEMO_CUSTOMERS.map((customer) => (
+              <MenuItem key={customer.user_id} value={customer.user_id}>
+                <Box>
+                  <Typography sx={{ fontWeight: 600 }}>
+                    {customer.name}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {customer.user_id} • {customer.occupation} • {customer.city}
+                  </Typography>
+                </Box>
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
       </CardContent>
     </Card>
   );
@@ -326,20 +292,7 @@ function TransactionTest() {
    * Render thông tin profile khách hàng
    */
   const renderUserProfile = () => {
-    if (!selectedUser) return null;
-
-    if (loadingUserData) {
-      return (
-        <Card sx={{ mb: 3 }}>
-          <CardContent>
-            <Skeleton variant="text" width="60%" />
-            <Skeleton variant="rectangular" height={100} sx={{ mt: 2 }} />
-          </CardContent>
-        </Card>
-      );
-    }
-
-    if (!userProfile) return null;
+    if (!selectedUser || !userProfile) return null;
 
     return (
       <Card sx={{ mb: 3 }}>
@@ -456,17 +409,6 @@ function TransactionTest() {
   const renderTransactionHistory = () => {
     if (!selectedUser) return null;
 
-    if (loadingUserData) {
-      return (
-        <Card sx={{ mb: 3 }}>
-          <CardContent>
-            <Skeleton variant="text" width="60%" />
-            <Skeleton variant="rectangular" height={200} sx={{ mt: 2 }} />
-          </CardContent>
-        </Card>
-      );
-    }
-
     return (
       <Card sx={{ mb: 3 }}>
         <CardContent>
@@ -478,7 +420,12 @@ function TransactionTest() {
               </Typography>
             </Box>
             <Tooltip title="Tải lại">
-              <IconButton size="small" onClick={() => handleUserSelect(null, selectedUser)}>
+              <IconButton size="small" onClick={() => {
+                if (selectedUserId) {
+                  const transactions = getDemoTransactions(selectedUserId);
+                  setUserTransactions(transactions);
+                }
+              }}>
                 <RefreshIcon />
               </IconButton>
             </Tooltip>
