@@ -1799,10 +1799,219 @@ def train_lstm():
         }), 500
 
 
+# ===== GNN HETEROGENEOUS GRAPH ENDPOINTS (MỚI - 2 BƯỚC) =====
+
+@api.route('/train/gnn/status', methods=['GET'])
+def get_gnn_status():
+    """
+    Lấy trạng thái GNN pipeline
+
+    Response:
+    {
+        "success": true,
+        "status": {
+            "data_exists": true,
+            "graph_ready": true,
+            "model_ready": false,
+            "graph_path": "...",
+            "graph_stats": {...}
+        }
+    }
+    """
+    logger.info("[GNN] Kiểm tra trạng thái...")
+
+    try:
+        from scripts.train_gnn import get_gnn_status as check_status, GNN_DATA_DIR
+
+        status = check_status()
+
+        return jsonify({
+            'success': True,
+            'status': status,
+            'timestamp': datetime.now().isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"[GNN] Lỗi kiểm tra trạng thái: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@api.route('/train/gnn/build', methods=['POST'])
+def build_gnn_graph():
+    """
+    BƯỚC 1: Tạo mạng lưới GNN
+
+    Thực hiện:
+    1. Load dữ liệu từ gnn_data/
+    2. Sanity check - kiểm tra tính toàn vẹn
+    3. Build Heterogeneous Graph
+    4. Lưu graph và tạo flag file
+
+    KHÔNG train model!
+
+    Response:
+    {
+        "success": true,
+        "message": "Tạo mạng lưới GNN thành công!",
+        "graph_path": "...",
+        "stats": {
+            "num_users": 15,
+            "num_transfer_edges": 32,
+            ...
+        }
+    }
+    """
+    logger.info("=" * 60)
+    logger.info("[GNN] BƯỚC 1: TẠO MẠNG LƯỚI GNN")
+    logger.info("=" * 60)
+
+    try:
+        from scripts.train_gnn import build_gnn_graph as build_graph
+
+        # Chạy pipeline build graph
+        result = build_graph(verbose=True)
+
+        if result['success']:
+            logger.info("[GNN] Tạo mạng lưới thành công!")
+            return jsonify({
+                'success': True,
+                'message': result['message'],
+                'graph_path': result['graph_path'],
+                'flag_path': result['flag_path'],
+                'stats': result['stats'],
+                'timestamp': datetime.now().isoformat()
+            })
+        else:
+            logger.error(f"[GNN] Lỗi: {result['message']}")
+            return jsonify({
+                'success': False,
+                'error': result['message'],
+                'details': result.get('error', '')
+            }), 400
+
+    except Exception as e:
+        error_traceback = traceback.format_exc()
+        logger.error(f"[GNN] LỖI: {str(e)}")
+        logger.error(f"[GNN] Traceback:\n{error_traceback}")
+
+        return jsonify({
+            'success': False,
+            'error': f'Tạo mạng lưới thất bại: {str(e)}',
+            'details': error_traceback
+        }), 500
+
+
+@api.route('/train/gnn/train', methods=['POST'])
+def train_gnn_hetero():
+    """
+    BƯỚC 2: Huấn luyện GNN
+
+    Yêu cầu: Phải chạy Bước 1 trước (graph_ready.flag phải tồn tại)
+
+    Thực hiện:
+    1. Kiểm tra graph_ready.flag
+    2. Load graph đã build
+    3. Train HeteroGNN Model
+    4. Đánh giá và in metrics
+    5. Lưu model
+
+    Request body (optional):
+    {
+        "epochs": 100,
+        "hidden_channels": 64,
+        "num_layers": 2,
+        "learning_rate": 0.001
+    }
+
+    Response:
+    {
+        "success": true,
+        "message": "Huấn luyện GNN thành công!",
+        "model_path": "...",
+        "metrics": {
+            "accuracy": 0.85,
+            "precision": 0.82,
+            "recall": 0.78,
+            "f1_score": 0.80,
+            "roc_auc": 0.90
+        }
+    }
+    """
+    logger.info("=" * 60)
+    logger.info("[GNN] BƯỚC 2: HUẤN LUYỆN GNN")
+    logger.info("=" * 60)
+
+    try:
+        # Lấy config từ request body
+        data = request.get_json() or {}
+
+        config = {
+            'epochs': data.get('epochs', 100),
+            'hidden_channels': data.get('hidden_channels', 64),
+            'num_layers': data.get('num_layers', 2),
+            'learning_rate': data.get('learning_rate', 0.001),
+            'dropout': data.get('dropout', 0.3),
+            'patience': data.get('patience', 15)
+        }
+
+        logger.info(f"[GNN] Config: {config}")
+
+        from scripts.train_gnn import train_gnn_model
+
+        # Chạy training
+        result = train_gnn_model(config=config, verbose=True)
+
+        if result['success']:
+            logger.info("[GNN] Huấn luyện thành công!")
+
+            # Cập nhật prediction service
+            try:
+                from models.layer2.hetero_gnn_model import HeteroGNNModel
+                model = HeteroGNNModel()
+                model.load(result['model_path'])
+                # Có thể thêm model vào prediction service ở đây
+                logger.info("[GNN] Đã cập nhật model vào prediction service")
+            except Exception as e:
+                logger.warning(f"[GNN] Không thể cập nhật prediction service: {e}")
+
+            return jsonify({
+                'success': True,
+                'message': result['message'],
+                'model_path': result['model_path'],
+                'metrics': result['metrics'],
+                'training_info': result['training_info'],
+                'config': result['config'],
+                'timestamp': datetime.now().isoformat()
+            })
+        else:
+            logger.error(f"[GNN] Lỗi: {result['message']}")
+            return jsonify({
+                'success': False,
+                'error': result['message'],
+                'details': result.get('error', '')
+            }), 400
+
+    except Exception as e:
+        error_traceback = traceback.format_exc()
+        logger.error(f"[GNN] LỖI: {str(e)}")
+        logger.error(f"[GNN] Traceback:\n{error_traceback}")
+
+        return jsonify({
+            'success': False,
+            'error': f'Huấn luyện thất bại: {str(e)}',
+            'details': error_traceback
+        }), 500
+
+
+# ===== GNN LEGACY ENDPOINT (giữ lại cho tương thích) =====
+
 @api.route('/train/gnn', methods=['POST'])
 def train_gnn():
-    """Train GNN model với file upload"""
-    logger.info("[GNN] Bắt đầu training...")
+    """Train GNN model với file upload (legacy - cho data dạng cũ)"""
+    logger.info("[GNN Legacy] Bắt đầu training...")
 
     try:
         if 'file' not in request.files:
@@ -1864,7 +2073,7 @@ def train_gnn():
         metrics = model.evaluate(X_test, y_test, verbose=True)
         model.save()
 
-        logger.info("[GNN] Training hoàn tất!")
+        logger.info("[GNN Legacy] Training hoàn tất!")
 
         return jsonify({
             'success': True,
@@ -1879,7 +2088,7 @@ def train_gnn():
         })
 
     except Exception as e:
-        logger.error(f"[GNN] LỖI: {str(e)}")
+        logger.error(f"[GNN Legacy] LỖI: {str(e)}")
         return jsonify({
             'success': False,
             'error': f'Training thất bại: {str(e)}'

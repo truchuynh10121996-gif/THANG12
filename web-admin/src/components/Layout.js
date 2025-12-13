@@ -18,7 +18,8 @@ import {
   Dashboard as DashboardIcon,
   QuestionAnswer as QAIcon,
   Chat as ChatIcon,
-  Security as SecurityIcon
+  Security as SecurityIcon,
+  Psychology as TrainIcon
 } from '@mui/icons-material';
 
 const drawerWidth = 280;
@@ -26,6 +27,7 @@ const drawerWidth = 280;
 const menuItems = [
   { text: 'Dashboard', icon: <DashboardIcon />, path: '/' },
   { text: 'Quản lý Q&A', icon: <QAIcon />, path: '/qa-management' },
+  { text: 'Huấn luyện mô hình', icon: <TrainIcon />, path: '/model-training' },
   { text: 'Xem trước Chatbot', icon: <ChatIcon />, path: '/chatbot-preview' }
 ];
 

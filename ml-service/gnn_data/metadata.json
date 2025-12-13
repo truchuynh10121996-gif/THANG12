@@ -1,0 +1,135 @@
+{
+  "dataset_name": "GNN Fraud Detection Dataset - Agribank Vietnam",
+  "version": "1.0.0",
+  "created_at": "2024-12-07",
+  "description": "Bộ dữ liệu đồ thị dị thể (heterogeneous graph) cho phát hiện gian lận giao dịch ngân hàng",
+  "task_type": "edge_classification",
+  "target": "Phân loại edge transfer là fraud (1) hoặc normal (0)",
+
+  "node_types": {
+    "user": {
+      "count": 15,
+      "description": "Người dùng/Khách hàng ngân hàng",
+      "features": ["age", "income_level", "account_age_days", "avg_transaction_amount", "credit_score", "kyc_level", "is_verified"]
+    },
+    "recipient": {
+      "count": 8,
+      "description": "Người nhận tiền (có thể là tài khoản fraud)"
+    },
+    "device": {
+      "count": 7,
+      "description": "Thiết bị đăng nhập (điện thoại, máy tính)"
+    },
+    "ip": {
+      "count": 7,
+      "description": "Địa chỉ IP truy cập (bao gồm proxy/VPN đáng ngờ)"
+    }
+  },
+
+  "edge_types": {
+    "transfer": {
+      "source": "user",
+      "target": "recipient",
+      "count": 32,
+      "has_label": true,
+      "has_features": true,
+      "num_features": 40,
+      "description": "Giao dịch chuyển tiền từ user đến recipient"
+    },
+    "uses_device": {
+      "source": "user",
+      "target": "device",
+      "count": 25,
+      "has_label": false,
+      "has_features": false,
+      "description": "User sử dụng device nào để giao dịch"
+    },
+    "uses_ip": {
+      "source": "user",
+      "target": "ip",
+      "count": 26,
+      "has_label": false,
+      "has_features": false,
+      "description": "User truy cập từ IP nào"
+    }
+  },
+
+  "label_distribution": {
+    "normal": 18,
+    "fraud": 14,
+    "fraud_ratio": 0.4375
+  },
+
+  "split_distribution": {
+    "train": 22,
+    "val": 3,
+    "test": 5
+  },
+
+  "feature_descriptions": {
+    "edge_features": {
+      "amount": "Số tiền giao dịch (VNĐ)",
+      "amount_log": "Log của số tiền",
+      "balance_before": "Số dư trước giao dịch",
+      "balance_after": "Số dư sau giao dịch",
+      "transaction_type": "Loại giao dịch (peer_transfer, business)",
+      "channel": "Kênh giao dịch (mobile, web)",
+      "is_international": "Giao dịch quốc tế (0/1)",
+      "hour": "Giờ trong ngày (0-23)",
+      "day_of_week": "Ngày trong tuần (0-6)",
+      "is_weekend": "Cuối tuần (0/1)",
+      "is_night": "Ban đêm 22h-6h (0/1)",
+      "velocity_1h": "Số giao dịch trong 1 giờ gần nhất",
+      "velocity_24h": "Số giao dịch trong 24 giờ gần nhất",
+      "amount_zscore": "Z-score của số tiền so với lịch sử user",
+      "device_change": "Có thay đổi thiết bị (0/1)",
+      "ip_change": "Có thay đổi IP (0/1)",
+      "location_change": "Có thay đổi vị trí (0/1)",
+      "recipient_is_new": "Người nhận mới (0/1)",
+      "recipient_risk_score": "Điểm rủi ro của người nhận (0-1)",
+      "sender_avg_amount": "Số tiền giao dịch trung bình của sender",
+      "sender_std_amount": "Độ lệch chuẩn số tiền của sender",
+      "amount_deviation": "Độ lệch so với trung bình",
+      "time_since_last_tx": "Thời gian từ giao dịch cuối (giây)",
+      "tx_count_1h": "Số giao dịch trong 1 giờ",
+      "tx_count_24h": "Số giao dịch trong 24 giờ",
+      "failed_attempts": "Số lần thử thất bại",
+      "login_attempts": "Số lần đăng nhập",
+      "session_duration": "Thời gian session (phút)",
+      "app_version": "Phiên bản app",
+      "os_type": "Loại hệ điều hành",
+      "browser_type": "Loại trình duyệt",
+      "screen_resolution": "Độ phân giải màn hình",
+      "language": "Ngôn ngữ",
+      "timezone_offset": "Múi giờ",
+      "merchant_category": "Danh mục merchant",
+      "merchant_risk": "Rủi ro merchant (0-1)",
+      "is_recurring": "Giao dịch định kỳ (0/1)",
+      "is_scheduled": "Giao dịch đặt lịch (0/1)",
+      "otp_verified": "Đã xác thực OTP (0/1)",
+      "biometric_verified": "Đã xác thực sinh trắc học (0/1)",
+      "pin_verified": "Đã xác thực PIN (0/1)",
+      "risk_score_realtime": "Điểm rủi ro realtime (0-1)"
+    },
+    "node_features_user": {
+      "age": "Tuổi",
+      "income_level": "Mức thu nhập (low/medium/high)",
+      "account_age_days": "Số ngày sử dụng tài khoản",
+      "avg_transaction_amount": "Số tiền giao dịch trung bình",
+      "credit_score": "Điểm tín dụng (300-850)",
+      "kyc_level": "Cấp độ KYC (1-3)",
+      "is_verified": "Đã xác minh danh tính (0/1)"
+    }
+  },
+
+  "fraud_patterns": {
+    "night_transactions": "Giao dịch ban đêm (2h-4h sáng)",
+    "high_velocity": "Nhiều giao dịch liên tiếp trong thời gian ngắn",
+    "unusual_amount": "Số tiền bất thường so với lịch sử",
+    "new_recipient": "Chuyển tiền đến người nhận mới",
+    "device_ip_change": "Thay đổi thiết bị và IP đột ngột",
+    "no_verification": "Không xác thực OTP/biometric",
+    "international": "Giao dịch quốc tế bất thường",
+    "balance_drain": "Rút cạn số dư tài khoản"
+  }
+}

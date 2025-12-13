@@ -8,6 +8,7 @@ import CssBaseline from '@mui/material/CssBaseline';
 import Dashboard from './pages/Dashboard';
 import QAManagement from './pages/QAManagement';
 import ChatbotPreview from './pages/ChatbotPreview';
+import ModelTraining from './pages/ModelTraining';
 import Layout from './components/Layout';
 
 // Theme configuration
@@ -52,6 +53,7 @@ function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/qa-management" element={<QAManagement />} />
             <Route path="/chatbot-preview" element={<ChatbotPreview />} />
+            <Route path="/model-training" element={<ModelTraining />} />
           </Routes>
         </Layout>
       </Router>
