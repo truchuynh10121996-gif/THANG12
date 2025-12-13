@@ -61,9 +61,8 @@ import {
   trainLightGBM,
   trainAutoencoder,
   trainLSTM,
-  trainGNN,
   trainAllWithData,
-  // GNN Heterogeneous APIs (MỚI)
+  // GNN Heterogeneous APIs
   buildGNNGraph,
   trainGNNHetero,
   getGNNStatus,
@@ -229,41 +228,6 @@ const MODEL_CONFIGS = {
       ],
     },
     sampleFile: 'lstm_sample.csv',
-  },
-  gnn: {
-    name: 'GNN (Graph Neural Network)',
-    layer: 'Layer 2',
-    type: 'Supervised',
-    color: '#f44336',
-    icon: '🕸️',
-    description: 'Graph Neural Network phân tích mạng lưới quan hệ giao dịch',
-    trainFunction: trainGNN,
-    dataRequirements: {
-      format: 'CSV (Comma Separated Values)',
-      hasLabel: true,
-      minRows: 1000,
-      recommendedRows: '10,000 - 500,000',
-      requiredColumns: [
-        { name: 'user_id', type: 'string', description: '⚠️ BẮT BUỘC: ID người gửi (node nguồn)' },
-        { name: 'recipient_id', type: 'string', description: '⚠️ BẮT BUỘC: ID người nhận (node đích)' },
-        { name: 'is_fraud', type: 'number (0/1)', description: '⚠️ BẮT BUỘC: Nhãn gian lận' },
-        { name: 'amount', type: 'number', description: 'Số tiền giao dịch' },
-      ],
-      optionalColumns: [
-        { name: 'recipient_type', type: 'string', description: 'Loại người nhận (individual, merchant, atm)' },
-        { name: 'transaction_type', type: 'string', description: 'Loại giao dịch' },
-        { name: 'is_international', type: 'number (0/1)', description: 'Giao dịch quốc tế' },
-        { name: 'timestamp', type: 'datetime', description: 'Thời gian giao dịch' },
-        { name: 'merchant_category', type: 'string', description: 'Danh mục merchant' },
-      ],
-      notes: [
-        'Model xây dựng graph từ quan hệ user → recipient',
-        'Phát hiện fraud dựa trên cấu trúc mạng lưới',
-        'Hiệu quả với fraud rings, money laundering',
-        'Cần đa dạng về các mối quan hệ giao dịch',
-      ],
-    },
-    sampleFile: 'gnn_sample.csv',
   },
 };
 
@@ -647,19 +611,6 @@ USR003,2024-12-07 02:45:00,45000000,transfer,mobile,individual,1,2,5,1
 USR003,2024-12-07 02:48:00,42000000,transfer,mobile,individual,1,2,6,1
 USR003,2024-12-07 02:51:00,38000000,transfer,mobile,individual,1,2,7,1
 USR004,2024-12-07 14:20:33,320000,payment,mobile,merchant,0,14,1,0`;
-
-    case 'gnn':
-      return `user_id,recipient_id,amount,recipient_type,transaction_type,is_international,timestamp,merchant_category,is_fraud
-USR001,USR002,2500000,individual,transfer,0,2024-12-07 09:15:23,peer_transfer,0
-USR001,MER001,150000,merchant,payment,0,2024-12-07 10:30:45,food_delivery,0
-USR002,USR005,850000,individual,transfer,0,2024-12-07 11:22:18,peer_transfer,0
-USR003,USR999,45000000,individual,transfer,1,2024-12-07 02:45:00,peer_transfer,1
-USR004,MER002,320000,merchant,payment,0,2024-12-07 14:20:33,shopping,0
-USR005,ATM001,1200000,atm,withdrawal,0,2024-12-07 08:10:55,atm_withdrawal,0
-USR001,USR888,8500000,individual,transfer,1,2024-12-07 03:22:11,peer_transfer,1
-USR006,USR003,3500000,individual,transfer,0,2024-12-07 12:45:22,peer_transfer,0
-USR007,MER003,1800000,merchant,payment,0,2024-12-07 15:33:45,electronics,0
-USR002,USR777,25000000,individual,transfer,1,2024-12-07 04:15:00,peer_transfer,1`;
 
     default:
       return '';
@@ -1480,23 +1431,6 @@ function ModelTraining() {
           ))}
         </Grid>
 
-        {/* Legacy GNN (cho file CSV đơn giản) */}
-        <Divider sx={{ my: 3 }}>
-          <Chip label="GNN Legacy (file CSV đơn giản)" size="small" variant="outlined" />
-        </Divider>
-        <Grid container spacing={3}>
-          <Grid item xs={12} md={6}>
-            <ModelCard
-              modelKey="gnn"
-              config={MODEL_CONFIGS.gnn}
-              status={modelStatus}
-              onTrain={handleTrainModel}
-              training={training}
-              currentModel={trainingModel}
-              trainedModels={trainedModels}
-            />
-          </Grid>
-        </Grid>
       </TabPanel>
 
       {/* Tab 1: Train by Layer */}
