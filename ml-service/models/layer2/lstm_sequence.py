@@ -80,6 +80,32 @@ def _get_threshold_optimizer():
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
+def _convert_to_serializable(obj):
+    """
+    Convert numpy/torch types to JSON serializable Python types
+
+    Đảm bảo tất cả các giá trị float32, int64, ndarray... được convert
+    sang Python native types trước khi serialize JSON
+    """
+    if obj is None:
+        return None
+    elif isinstance(obj, (np.floating, np.float32, np.float64)):
+        return float(obj)
+    elif isinstance(obj, (np.integer, np.int32, np.int64)):
+        return int(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {k: _convert_to_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_convert_to_serializable(item) for item in obj]
+    elif hasattr(obj, 'item'):  # For PyTorch tensors with single value
+        return obj.item()
+    elif isinstance(obj, bool):
+        return bool(obj)
+    return obj
+
+
 class LSTMNetwork(nn.Module):
     """
     LSTM network cho sequence classification
@@ -485,8 +511,9 @@ class LSTMSequenceModel:
             'history': self.history,
             'is_fitted': self.is_fitted,
             # Threshold optimization data (NEW)
-            'optimal_threshold': self.optimal_threshold,
-            'threshold_config': self.threshold_config
+            # Convert to native Python float để tránh lỗi serialization
+            'optimal_threshold': float(self.optimal_threshold) if self.optimal_threshold is not None else 0.5,
+            'threshold_config': _convert_to_serializable(self.threshold_config)
         }
 
         torch.save(save_data, path)
@@ -495,8 +522,10 @@ class LSTMSequenceModel:
         # Lưu threshold config riêng (JSON)
         if self.threshold_config is not None:
             threshold_path = path.replace('.pth', '_threshold.json')
+            # Convert numpy/torch types to JSON serializable Python types
+            serializable_config = _convert_to_serializable(self.threshold_config)
             with open(threshold_path, 'w', encoding='utf-8') as f:
-                json.dump(self.threshold_config, f, indent=2, ensure_ascii=False)
+                json.dump(serializable_config, f, indent=2, ensure_ascii=False)
             print(f"[LSTM] Đã lưu threshold config: {threshold_path}")
 
     def load(self, path: str = None):
